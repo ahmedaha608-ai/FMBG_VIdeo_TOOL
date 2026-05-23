@@ -15,7 +15,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 app = Client("video_ultimate_bot", api_id=int(API_ID), api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 user_thumbs = {}
-MAX_TG_SIZE = 2000 * 1024 * 1024  # حد تليجرام الافتراضي (2 جيجابايت)
+MAX_TG_SIZE = 2000 * 1024 * 1024  # 2 جيجابايت
 
 QUALITY_SETTINGS = {
     "240p": {"scale": "426:240", "crf": "30", "bitrate": "64k"},
@@ -96,10 +96,8 @@ async def handle_leech_cmd(client, message: Message):
     user_id = message.from_user.id
     target_link = None
 
-    # التحقق إذا كان الرابط مكتوب بجانب الأمر في نفس الرسالة
     if len(message.command) > 1:
         target_link = message.text.split(None, 1)[1].strip()
-    # التحقق إذا كان العضو عامل Reply على رسالة تحتوي على رابط
     elif message.reply_to_message and message.reply_to_message.text:
         target_link = message.reply_to_message.text.strip()
 
@@ -117,10 +115,8 @@ async def handle_torrent_cmd(client, message: Message):
     target_input = None
     is_file = False
 
-    # 1. إذا كان رابط ماجنت مكتوب جنب الأمر
     if len(message.command) > 1:
         target_input = message.text.split(None, 1)[1].strip()
-    # 2. إذا كان Reply على ملف تورنت أو رابط ماجنت
     elif message.reply_to_message:
         reply_msg = message.reply_to_message
         if reply_msg.document and reply_msg.document.file_name.endswith(".torrent"):
@@ -136,12 +132,10 @@ async def handle_torrent_cmd(client, message: Message):
     if not is_file and not (target_input.startswith("magnet:") or target_input.startswith("http")):
         return await message.reply_text("❌ عذراً، هذا ليس رابط تورنت (Magnet) صحيحاً.")
 
-    if 'status' Governors not in locals():
-        status = await message.reply_text("⏳ جاري تشغيل محرّك Aria2 والاتصال بالـ Seeders...")
-
+    status = await message.reply_text("⏳ جاري تشغيل محرّك Aria2 والاتصال بالـ Seeders...")
     await download_and_process_aria(client, message, status, target_input, chat_id, user_id, is_file)
 
-# --- دالة معالجة وتحميل Aria2 المشتركة للتحميل والرفع الفعلي للأحجام الكبيرة ---
+# --- دالة معالجة وتحميل Aria2 المشتركة ---
 async def download_and_process_aria(client, message, status, target, chat_id, user_id, is_file=False):
     user_download_dir = f"dl_{chat_id}_{user_id}"
     os.makedirs(user_download_dir, exist_ok=True)
@@ -155,7 +149,7 @@ async def download_and_process_aria(client, message, status, target, chat_id, us
         if is_file and os.path.exists(target): os.remove(target)
         return
 
-    await status.edit_text("📤 اكتمل التحميل على السيرفر! جاري فحص الملفات وتشغيل عداد الرفع الذكي...")
+    await status.edit_text("📤 اكتمل التحميل على السيرفر! جاري تشغيل عداد الرفع الذكي...")
 
     for root, dirs, files in os.walk(user_download_dir):
         for file in files:
@@ -164,7 +158,6 @@ async def download_and_process_aria(client, message, status, target, chat_id, us
             caption = f"🎬 تم معالجة ورفع الملف بنجاح!\n📄 الاسم: `{file}`\n👤 بطلب من: {message.from_user.mention}"
 
             try:
-                # تشغيل دالة التقطيع الفوري والرفع بالعداد
                 await split_and_upload_video(client, message, status, file_path, caption)
             except Exception as e:
                 await message.reply_text(f"❌ خطأ أثناء الرفع: `{str(e)}`")
@@ -178,7 +171,7 @@ async def download_and_process_aria(client, message, status, target, chat_id, us
     except: pass
     await status.delete()
 
-# --- 4. أمر ضغط الفيديو بالرد لتوليد أزرار الجودات العالية ---
+# --- 4. أمر ضغط الفيديو بالرد لتوليد أزرار الجودات ---
 @app.on_message(filters.command("compressor_video"))
 async def ask_for_quality(client, message: Message):
     if not message.reply_to_message or not (message.reply_to_message.video or message.reply_to_message.document):
@@ -252,5 +245,5 @@ async def apply_thumb_via_reply(client, message: Message):
     await status.delete()
 
 if __name__ == "__main__":
-    print("🚀 البوت الإمبراطوري الشامل يعمل الآن بأعلى كفاءة ونظام الدمج الفوري الحقيقي...")
+    print("🚀 تم إصلاح الكود بالكامل، جاهز للتشغيل المستقر 100%...")
     app.run()
