@@ -83,14 +83,14 @@ async def start(client, message: Message):
     await message.reply_text(
         "👋 Welcome to the Ultimate Media Leech & Compressor Bot!\n\n"
         "💡 **How to use:**\n"
-        "• `/leech [link]` - Download direct link\n"
-        "• `/torrent [magnet/file]` - Download torrent\n"
-        "• Reply with `/compress` on any video to change resolution\n"
-        "• Reply with `/thumb` on any video after sending a photo to change thumbnail."
+        "• `/leechkmd [link]` - Download direct link\n"
+        "• `/torrentkmd [magnet/file]` - Download torrent\n"
+        "• Reply with `/compressvideo` on any video to change resolution\n"
+        "• Reply with `/thumbchange` on any video after sending a photo to change thumbnail."
     )
 
-# --- 2. معالجة أمر الـ Leech (الروابط المباشرة) ---
-@app.on_message(filters.command("leech"))
+# --- 2. معالجة أمر الـ Leechkmd (الروابط المباشرة) ---
+@app.on_message(filters.command("leechkmd"))
 async def handle_leech_cmd(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -107,8 +107,8 @@ async def handle_leech_cmd(client, message: Message):
     status = await message.reply_text("⏳ Initializing download from direct link...")
     await download_and_process_aria(client, message, status, target_link, chat_id, user_id)
 
-# --- 3. معالجة أمر التورنت (ملفات وماجنت) ---
-@app.on_message(filters.command("torrent"))
+# --- 3. معالجة أمر Torrentkmd (ملفات وماجنت) ---
+@app.on_message(filters.command("torrentkmd"))
 async def handle_torrent_cmd(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -171,8 +171,8 @@ async def download_and_process_aria(client, message, status, target, chat_id, us
     except: pass
     await status.delete()
 
-# --- 4. أمر ضغط الفيديو بالرد لتوليد أزرار الجودات ---
-@app.on_message(filters.command("compress"))
+# --- 4. معالجة أمر Compressvideo بالرد لتوليد أزرار الجودات ---
+@app.on_message(filters.command("compressvideo"))
 async def ask_for_quality(client, message: Message):
     if not message.reply_to_message or not (message.reply_to_message.video or message.reply_to_message.document):
         return await message.reply_text("⚠️ Error: You must reply with this command to the video you want to compress!")
@@ -216,15 +216,15 @@ async def start_compression_callback(client, callback_query: CallbackQuery):
     if os.path.exists(input_file): os.remove(input_file)
     await status.delete()
 
-# --- 5. تغيير الـ Thumbnail بالرد ---
+# --- 5. معالجة أمر Thumbchange بالرد لتغيير الـ Thumbnail ---
 @app.on_message(filters.photo)
 async def save_photo_thumb(client, message: Message):
     thumb_path = f"thumb_{message.chat.id}_{message.from_user.id}.jpg"
     await message.download(file_name=thumb_path)
     user_thumbs[(message.chat.id, message.from_user.id)] = thumb_path
-    await message.reply_text("🖼️ Thumbnail saved! Now reply to your video with `/thumb` to apply it.")
+    await message.reply_text("🖼️ Thumbnail saved! Now reply to your video with `/thumbchange` to apply it.")
 
-@app.on_message(filters.command("thumb"))
+@app.on_message(filters.command("thumbchange"))
 async def apply_thumb_via_reply(client, message: Message):
     chat_id, user_id = message.chat.id, message.from_user.id
     thumb_path = user_thumbs.get((chat_id, user_id))
@@ -245,5 +245,5 @@ async def apply_thumb_via_reply(client, message: Message):
     await status.delete()
 
 if __name__ == "__main__":
-    print("🚀 Bot deployed successfully with simplified clean commands!")
+    print("🚀 Bot deployed successfully with custom kmd commands!")
     app.run()
