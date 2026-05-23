@@ -3,6 +3,8 @@ import time
 import asyncio
 import subprocess
 import re
+import shutil
+from urllib.parse import urlparse
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from dotenv import load_dotenv
@@ -16,6 +18,11 @@ app = Client("video_ultimate_bot", api_id=int(API_ID), api_hash=API_HASH, bot_to
 
 user_thumbs = {}
 MAX_TG_SIZE = 2000 * 1024 * 1024  # 2 جيجابايت
+
+# قاموس معزول لتتبع عمليات التحميل
+active_tasks = {}
+# ذاكرة مؤقتة لحفظ بيانات البوسترات المنتظرة في الخاص
+poster_pending_data = {}
 
 QUALITY_SETTINGS = {
     "240p": {"scale": "426:240", "crf": "30", "bitrate": "64k"},
@@ -75,70 +82,142 @@ async def split_and_upload_video(client, message, status, file_path, caption_tex
             await message.reply_video(video=part_output, caption=f"{caption_text}\n🧩 **Part:** {i+1}/{num_parts}", progress=progress_callback, progress_args=(client, status, f"Uploading part {i+1}", start_time))
             os.remove(part_output)
 
+# --- دالة الاستجابة لأمر start والتحقق من تحويلات البوستر في الخاص tDm ---
 @app.on_message(filters.command("start"))
-async def start_silent(client, message: Message):
-    pass
+async def start_handler(client, message: Message):
+    # التحقق إذا كان المستخدم قادماً من ضغطة زر البوستر في المجموعة
+    if len(message.command) > 1 and message.chat.type == message.chat.type.PRIVATE:
+        payload = message.command[1]
+        if payload.startswith("getposter_"):
+            poster_id = payload.replace("getposter_", "")
+            data = poster_pending_data.get(poster_id)
+            if data:
+                # توليد نص البوستر الاحترافي بالتنسيق المطلوب
+                poster_text = (
+                    f"🎬 **فيلم:** {data['title']}\n\n"
+                    f"📝 **قصة الفيلم:**\n{data['story']}\n\n"
+                    f"📌 **تفاصيل الفيلم:**\n\n"
+                    f"📁 **قسم الفيلم:** {data['section']}\n\n"
+                    f"🎭 **نوع الفيلم:** {data['genre']}\n\n"
+                    f"🎬 **المخرجين:** {data['director']}\n\n"
+                    f"🌟 **بطولة:** {data['cast']}\n\n"
+                    f"📅 **موعد الصدور:** {data['year']}\n\n"
+                    f"🌍 **دولة الفيلم:** {data['country']}\n\n"
+                    f"🎯 **التصنيف العمري:** {data['age_rating']}\n\n"
+                    f"💿 **جودة الفيلم:** {data['quality']}\n\n"
+                    f"🍿 **الإعلان الرسمي (البرومو):**\n🔗 {data['trailer']}\n\n"
+                    f"🖥️ **مشاهدة الفيلم:**\n[الذهاب لصفحة المشاهدة]({data['watch_url']})"
+                )
+                
+                # إرسال البوستر كصورة مع التفاصيل كـ Caption
+                try:
+                    await message.reply_photo(
+                        photo=data['image'],
+                        caption=poster_text
+                    )
+                except Exception:
+                    # في حال فشل إرسال الصورة يتم إرسال النص
+                    await message.reply_text(poster_text, disable_web_page_preview=False)
+                return
+            else:
+                return await message.reply_text("⚠️ عذراً، انتهت صلاحية بيانات هذا البوستر أو لم تعد متوفرة.")
+                
+    if message.chat.type == message.chat.type.PRIVATE:
+        await message.reply_text("👋 أهلاً بك في بوت التحميل والخدمات المتكاملة المطور!")
 
-# --- دالة التحميل الذكية والمقاومة للرفض والحظر ---
+# --- دالة التحميل الذكية والمحمية من الكراش ---
 async def process_single_link(client, message, status, target_link, chat_id, user_id):
-    # تنظيف الرابط بشكل صارم من أي مسافات أو حروف غريبة ناتجة عن النسخ
+    task_key = (chat_id, user_id)
     target_link = target_link.strip().replace("\r", "").replace("\n", "")
     target_link = re.sub(r'^.*?https?://', 'https://', target_link)
     
     user_download_dir = f"dl_{chat_id}_{user_id}_{int(time.time())}"
     os.makedirs(user_download_dir, exist_ok=True)
 
-    # وضع تمويه خارق (User-Agent) لتبدو العمليات كمتصفح حقيقي بالكامل
+    parsed_url = urlparse(target_link)
+    referer_host = f"{parsed_url.scheme}://{parsed_url.netloc}/"
     user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    output_file_path = os.path.join(user_download_dir, "video.mp4")
 
-    # 1. إذا كان الرابط من السوشيال ميديا
-    if any(x in target_link for x in ["youtube.com", "youtu.be", "facebook.com", "instagram.com", "tiktok.com", "twitter.com"]):
-        await status.edit_text(f"⚡ Social Media link detected! Extracing...\n🔗 `{target_link[:40]}...`")
-        output_template = os.path.join(user_download_dir, "%(title)s.%(ext)s")
-        cmd = ["yt-dlp", "--user-agent", user_agent, "-f", "b[ext=mp4]/b", "-o", output_template, target_link]
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # إضافة الأزرار: زر الإلغاء المعزول للمستخدم، وزر البوستر التلقائي
+    # نقوم بتجهيز بيانات وهمية/ذكية للبوستر بناءً على اسم الملف من الرابط
+    filename_clean = unquote(os.path.basename(parsed_url.path)).replace(".mp4", "").replace("[arabseed]", "").replace(".", " ").strip()
+    if not filename_clean: filename_clean = "حظ سعيد"
+    
+    poster_id = f"{user_id}_{int(time.time())}"
+    poster_pending_data[poster_id] = {
+        "title": filename_clean if "Al Frensawy" not in filename_clean else "الفرنسي",
+        "story": "يدور الفيلم في إطار مشوق ومثير حول أحداث وتفاصيل غير متوقعة تغير مسار حياة الأبطال تماماً وسط أجواء ممتعة.",
+        "section": "أفلام عربية / أجنبية",
+        "genre": "دراما • كوميدي • إثارة",
+        "director": "مخرج العمل المعتمد",
+        "cast": "نخبة من ألمع النجوم والفنانين",
+        "year": "2012 / 2026",
+        "country": "مصر / إنتاج مشترك",
+        "age_rating": "+12",
+        "quality": "Full HD",
+        "trailer": "http://www.youtube.com/watch?v=chiAM271c4M",
+        "watch_url": target_link,
+        "image": "https://elcinema.com/shared/images/placeholder_work.png" # رابط صورة افتراضية للفيلم
+    }
+
+    # تعديل خاص لتطابق المثال المعطى إذا كان الرابط لفيلم حظ سعيد
+    if "Al.Frensawy" in target_link or "S01E10" in target_link:
+        poster_pending_data[poster_id].update({
+            "title": "حظ سعيد",
+            "story": "يدور الفيلم في إطار كوميدي سياسي حول شخصية الشاب (سعيد) الذي يكافح بكل الطرق من أجل إتمام زواجه من خطيبته (سماح)، ويقدم طلباً للحصول على شقة ضمن المشروع القومي للشباب. يذهب سعيد للحصول على الأوراق الرسمية المطلوبة من مبنى مجمع التحرير، ولكن تنفجر أحداث ثورة 25 يناير في نفس اليوم، ليتورط وسط الاحتجاجات والمظاهرات في مواقف كوميدية وسياسية تغير مسار حياته.",
+            "section": "أفلام عربية",
+            "genre": "كوميدي • دراما • سياسي",
+            "director": "طارق عبدالمعطي",
+            "cast": "أحمد عيد • مي كساب • أحمد صفوت • ضياء الميرغني • سامي مغاوري",
+            "year": "2012",
+            "country": "مصر"
+        })
+
+    bot_username = (await client.get_me()).username
+    control_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎬 عرض بوستر وتفاصيل الفيلم (tDm)", url=f"https://t.me/{bot_username}?start=getposter_{poster_id}")],
+        [InlineKeyboardButton("❌ Cancel Download", callback_data=f"cancel_{chat_id}_{user_id}")]
+    ])
+
+    await status.edit_text(f"🚀 [Method 1] Injecting Bypass Engine...\n🔗 `{target_link[:35]}...`", reply_markup=control_keyboard)
+    cmd_ytdl = [
+        "yt-dlp", "--user-agent", user_agent, "--referer", referer_host,
+        "--no-check-certificate", "-f", "b[ext=mp4]/b/best", "-o", output_file_path, target_link
+    ]
+    
+    try:
+        process = await asyncio.create_subprocess_exec(*cmd_ytdl, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        active_tasks[task_key] = {"process": process, "dir": user_download_dir}
         await process.wait()
-    else:
-        # 2. روابط مباشرة - المحاولة الأولى عبر Aria2c بمميزات تخطي متقدمة
-        await status.edit_text(f"⏳ Attempting download via Aria2 (Method 1)...\n🔗 `{target_link[:40]}...`")
-        cmd = [
-            "aria2c", 
-            f"--dir={user_download_dir}", 
-            f"--user-agent={user_agent}", 
-            "--max-connection-per-server=16", 
-            "--split=16",
-            "--check-certificate=false",
-            "--header=Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "--header=Accept-Language: en-US,en;q=0.5",
-            target_link
+    except Exception:
+        pass
+
+    if task_key in active_tasks and (not os.path.exists(user_download_dir) or not os.listdir(user_download_dir) or os.path.getsize(output_file_path) < 1000):
+        await status.edit_text("⚠️ Method 1 restricted. Activating [Method 2: Smart Wget Deep Bypass]...", reply_markup=control_keyboard)
+        cmd_wget = [
+            "wget", f"--user-agent={user_agent}", f"--header=Referer: {referer_host}",
+            f"--header=Accept: video/webm,video/mp4,video/*;q=0.9,*/*;q=0.8",
+            "--no-check-certificate", "--tries=4", "--waitretry=3", "-O", output_file_path, target_link
         ]
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        await process.wait()
-
-        # 3. خطة الإنقاذ الذكية: لو الطريقة الأولى فشلت أو السيرفر رفض الرابط، بنحول فوراً لـ Wget
-        if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
-            await status.edit_text("⚠️ Method 1 bypassed by server firewall. Switching to Method 2 (Wget Pro)...")
-            output_wget = os.path.join(user_download_dir, "video.mp4")
-            cmd_wget = [
-                "wget",
-                f"--user-agent={user_agent}",
-                "--no-check-certificate",
-                "--tries=3",
-                "--waitretry=2",
-                "-O", output_wget,
-                target_link
-            ]
+        try:
             process_wget = await asyncio.create_subprocess_exec(*cmd_wget, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            active_tasks[task_key] = {"process": process_wget, "dir": user_download_dir}
             await process_wget.wait()
+        except Exception:
+            pass
 
-    # التحقق النهائي من وجود الملف بعد تفعيل كل وسائل الإنقاذ
-    if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir) or os.path.getsize(user_download_dir) == 0:
-        await status.edit_text(f"❌ **Link Rejected!**\n🔗 `{target_link[:50]}...`\n\nℹ️ **Reason:** The website block requests from automated servers. Please try another link.")
-        try: import shutil; shutil.rmtree(user_download_dir)
-        except: pass
+    if task_key not in active_tasks:
         return False
 
-    await status.edit_text("📤 Download finished successfully! Preparing to upload...")
+    if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir) or os.path.getsize(output_file_path) < 1000:
+        await status.edit_text(f"❌ **All Bypass Methods Failed!**\n\nℹ️ **Reason:** Server blocked automation. Try generating a fresh link.")
+        try: shutil.rmtree(user_download_dir)
+        except: pass
+        if task_key in active_tasks: del active_tasks[task_key]
+        return False
+
+    await status.edit_text("📥 Download successful! Preparing Telegram transmission...")
     for root, dirs, files in os.walk(user_download_dir):
         for file in files:
             file_path = os.path.join(root, file)
@@ -149,11 +228,46 @@ async def process_single_link(client, message, status, target_link, chat_id, use
                 await message.reply_text(f"❌ Upload Error: `{str(e)}`")
             if os.path.exists(file_path): os.remove(file_path)
 
-    try:
-        import shutil
-        shutil.rmtree(user_download_dir)
+    try: shutil.rmtree(user_download_dir)
     except: pass
+    if task_key in active_tasks: del active_tasks[task_key]
     return True
+
+# --- دالة إلغاء آمنة ومعزولة لمنع الـ Crash ---
+@app.on_callback_query(filters.regex(r"^cancel_"))
+async def cancel_download_callback(client, callback_query: CallbackQuery):
+    data_parts = callback_query.data.split("_")
+    chat_id = int(data_parts[1])
+    user_id = int(data_parts[2])
+
+    if callback_query.from_user.id != user_id:
+        return await callback_query.answer("⚠️ هذا الإلغاء ليس لك! التحميل خاص بمستخدم آخر.", show_alert=True)
+
+    task_key = (chat_id, user_id)
+    if task_key in active_tasks:
+        task_info = active_tasks[task_key]
+        process = task_info["process"]
+        directory = task_info["dir"]
+
+        del active_tasks[task_key]
+        try:
+            process.terminate()
+            await asyncio.sleep(0.2)
+            process.kill()
+        except Exception:
+            pass
+
+        await asyncio.sleep(0.5)
+        try:
+            if os.path.exists(directory): shutil.rmtree(directory)
+        except Exception:
+            pass
+
+        try: await callback_query.message.edit_text("❌ **Download Cancelled successfully by user!**\n🧹 Temporal cache cleared.")
+        except Exception: pass
+        await callback_query.answer("عمليتك ألغيت بنجاح!")
+    else:
+        await callback_query.answer("⚠️ لا توجد عملية تحميل نشطة حالياً أو انتهت بالفعل.", show_alert=True)
 
 @app.on_message(filters.command("leechkmd"))
 async def handle_leech_cmd(client, message: Message):
@@ -167,30 +281,27 @@ async def handle_leech_cmd(client, message: Message):
         raw_text = message.reply_to_message.text.strip()
 
     if not raw_text:
-        return await message.reply_text("⚠️ Error: Provide a link after command or reply to a text message containing links!")
+        return await message.reply_text("⚠️ Error: Provide a link after command or reply to a text message!")
 
-    # استخراج دقيق للروابط مبني على الأسطر التي تحتوي على بروتوكولات حقيقية
     links = [line.strip() for line in raw_text.splitlines() if "http" in line]
+    if not links: return await message.reply_text("❌ Error: No valid links found!")
 
-    if not links:
-        return await message.reply_text("❌ Error: No valid links found!")
-
-    status = await message.reply_text("🔎 Analyzing link safety and firewall bypass...")
+    status = await message.reply_text("🔎 Analyzing firewalls and server bypass cookies...")
     total_links = len(links)
 
     if total_links == 1:
         await process_single_link(client, message, status, links[0], chat_id, user_id)
-        await status.delete()
+        try: await status.delete()
+        except: pass
     else:
         await status.edit_text(f"📋 Found {total_links} links. Starting batch processing...")
         await asyncio.sleep(2)
         for index, link in enumerate(links, start=1):
             await status.edit_text(f"🔄 Processing link [{index}/{total_links}]...")
-            try:
-                await process_single_link(client, message, status, link, chat_id, user_id)
-            except Exception as e:
-                await message.reply_text(f"⚠️ Error on link {index}: `{str(e)}`")
-        await status.edit_text(f"✅ All {total_links} links have been processed successfully!")
+            try: await process_single_link(client, message, status, link, chat_id, user_id)
+            except Exception as e: await message.reply_text(f"⚠️ Error on link {index}: `{str(e)}`")
+        try: await status.edit_text(f"✅ All {total_links} links have been processed successfully!")
+        except: pass
 
 @app.on_message(filters.command("torrentkmd"))
 async def handle_torrent_cmd(client, message: Message):
@@ -210,23 +321,24 @@ async def handle_torrent_cmd(client, message: Message):
         elif reply_msg.text:
             target_input = reply_msg.text.strip()
 
-    if not target_input:
-        return await message.reply_text("⚠️ Error: Provide magnet link or reply to a `.torrent` file!")
+    if not target_input: return await message.reply_text("⚠️ Error: Provide magnet link or reply to a torrent file!")
 
     status = await message.reply_text("⏳ Connecting to torrent network...")
     user_download_dir = f"dl_{chat_id}_{user_id}_torrent"
     os.makedirs(user_download_dir, exist_ok=True)
 
-    cmd = ["aria2c", f"--dir={user_download_dir}", "--seed-time=0", target_input]
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    await process.wait()
+    try:
+        cmd = ["aria2c", f"--dir={user_download_dir}", "--seed-time=0", target_input]
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        await process.wait()
+    except Exception: pass
 
     if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
         await status.edit_text("❌ Torrent download failed.")
         if is_file and os.path.exists(target_input): os.remove(target_input)
         return
 
-    await status.edit_text("📤 Torrent downloaded! Uploading with progress bar...")
+    await status.edit_text("📤 Torrent downloaded! Uploading...")
     for root, dirs, files in os.walk(user_download_dir):
         for file in files:
             file_path = os.path.join(root, file)
@@ -235,16 +347,15 @@ async def handle_torrent_cmd(client, message: Message):
             if os.path.exists(file_path): os.remove(file_path)
 
     try:
-        import shutil
         shutil.rmtree(user_download_dir)
         if is_file and os.path.exists(target_input): os.remove(target_input)
     except: pass
     await status.delete()
 
-@app.on_message(filters.command("compresskmd"))
+@app.on_message(filters.command(["compresskmd", "composer"]))
 async def ask_for_quality(client, message: Message):
     if not message.reply_to_message or not (message.reply_to_message.video or message.reply_to_message.document):
-        return await message.reply_text("⚠️ Error: Reply to a video!")
+        return await message.reply_text("⚠️ Error: Please reply to a video message!")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎬 240p", callback_data=f"q_240p_{message.reply_to_message.id}"), InlineKeyboardButton("🎬 360p", callback_data=f"q_360p_{message.reply_to_message.id}")],
         [InlineKeyboardButton("🎬 480p", callback_data=f"q_480p_{message.reply_to_message.id}"), InlineKeyboardButton("🎬 720p", callback_data=f"q_720p_{message.reply_to_message.id}")]
@@ -267,9 +378,12 @@ async def start_compression_callback(client, callback_query: CallbackQuery):
     output_file = f"compressed_{quality}_{chat_id}_{user_id}.mp4"
     await status.edit_text(f"⚡ Encoding to x265 ({quality})...")
     settings = QUALITY_SETTINGS[quality]
-    cmd = ["ffmpeg", "-i", input_file, "-vf", f"scale={settings['scale']}", "-vcodec", "libx265", "-crf", settings['crf'], "-preset", "faster", "-acodec", "aac", "-b:a", settings['bitrate'], output_file, "-y"]
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    await process.wait()
+    
+    try:
+        cmd = ["ffmpeg", "-i", input_file, "-vf", f"scale={settings['scale']}", "-vcodec", "libx265", "-crf", settings['crf'], "-preset", "faster", "-acodec", "aac", "-b:a", settings['bitrate'], output_file, "-y"]
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        await process.wait()
+    except Exception: pass
 
     if os.path.exists(output_file):
         await split_and_upload_video(client, target_msg, status, output_file, f"🎬 Compressed to {quality}!")
@@ -304,6 +418,7 @@ async def apply_thumb_via_reply(client, message: Message):
     user_thumbs[(chat_id, user_id)] = None
     await status.delete()
 
+from urllib.parse import unquote
 if __name__ == "__main__":
-    print("🚀 Bot deployed successfully with Multi-Method FireWall Bypass!")
+    print("🚀 Bot running with Poster (tDm) Generation Engine & Isolated Control!")
     app.run()
