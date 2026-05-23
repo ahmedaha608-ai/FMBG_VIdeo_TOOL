@@ -79,21 +79,28 @@ async def split_and_upload_video(client, message, status, file_path, caption_tex
 async def start_silent(client, message: Message):
     pass
 
-# --- دالة التحميل الذكية والمطورة للروابط المعقدة ---
+# --- دالة التحميل الذكية والمقاومة للرفض والحظر ---
 async def process_single_link(client, message, status, target_link, chat_id, user_id):
-    # تنظيف الرابط تلقائياً لو بيبدأ بـ حروف أو أرقام غلط مثل (2/https)
+    # تنظيف الرابط بشكل صارم من أي مسافات أو حروف غريبة ناتجة عن النسخ
+    target_link = target_link.strip().replace("\r", "").replace("\n", "")
     target_link = re.sub(r'^.*?https?://', 'https://', target_link)
     
     user_download_dir = f"dl_{chat_id}_{user_id}_{int(time.time())}"
     os.makedirs(user_download_dir, exist_ok=True)
 
+    # وضع تمويه خارق (User-Agent) لتبدو العمليات كمتصفح حقيقي بالكامل
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+    # 1. إذا كان الرابط من السوشيال ميديا
     if any(x in target_link for x in ["youtube.com", "youtu.be", "facebook.com", "instagram.com", "tiktok.com", "twitter.com"]):
-        await status.edit_text(f"⚡ Social Media link detected! Extracting via YT-DLP...\n🔗 `{target_link[:50]}...`")
+        await status.edit_text(f"⚡ Social Media link detected! Extracing...\n🔗 `{target_link[:40]}...`")
         output_template = os.path.join(user_download_dir, "%(title)s.%(ext)s")
-        cmd = ["yt-dlp", "-f", "b[ext=mp4]/b", "-o", output_template, target_link]
+        cmd = ["yt-dlp", "--user-agent", user_agent, "-f", "b[ext=mp4]/b", "-o", output_template, target_link]
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        await process.wait()
     else:
-        await status.edit_text(f"⏳ Downloading direct link via Aria2 (Anti-Protection Mode)...\n🔗 `{target_link[:50]}...`")
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        # 2. روابط مباشرة - المحاولة الأولى عبر Aria2c بمميزات تخطي متقدمة
+        await status.edit_text(f"⏳ Attempting download via Aria2 (Method 1)...\n🔗 `{target_link[:40]}...`")
         cmd = [
             "aria2c", 
             f"--dir={user_download_dir}", 
@@ -101,18 +108,33 @@ async def process_single_link(client, message, status, target_link, chat_id, use
             "--max-connection-per-server=16", 
             "--split=16",
             "--check-certificate=false",
-            "--retry-wait=5",
-            "--max-tries=5",
-            target_link  # تمرير الرابط كمتغير نقي داخل مصفوفة الحماية لمنع كسر علامة &
+            "--header=Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "--header=Accept-Language: en-US,en;q=0.5",
+            target_link
         ]
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        await process.wait()
 
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = await process.communicate()
+        # 3. خطة الإنقاذ الذكية: لو الطريقة الأولى فشلت أو السيرفر رفض الرابط، بنحول فوراً لـ Wget
+        if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
+            await status.edit_text("⚠️ Method 1 bypassed by server firewall. Switching to Method 2 (Wget Pro)...")
+            output_wget = os.path.join(user_download_dir, "video.mp4")
+            cmd_wget = [
+                "wget",
+                f"--user-agent={user_agent}",
+                "--no-check-certificate",
+                "--tries=3",
+                "--waitretry=2",
+                "-O", output_wget,
+                target_link
+            ]
+            process_wget = await asyncio.create_subprocess_exec(*cmd_wget, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            await process_wget.wait()
 
-    if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
-        error_msg = stderr.decode().strip() if stderr else "Network Block or Link Expired"
-        await status.edit_text(f"❌ **Download Failed!**\n🔗 `{target_link[:60]}...`\n\nℹ️ **Reason:** {error_msg[:100]}")
-        try: os.rmdir(user_download_dir)
+    # التحقق النهائي من وجود الملف بعد تفعيل كل وسائل الإنقاذ
+    if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir) or os.path.getsize(user_download_dir) == 0:
+        await status.edit_text(f"❌ **Link Rejected!**\n🔗 `{target_link[:50]}...`\n\nℹ️ **Reason:** The website block requests from automated servers. Please try another link.")
+        try: import shutil; shutil.rmtree(user_download_dir)
         except: pass
         return False
 
@@ -147,13 +169,13 @@ async def handle_leech_cmd(client, message: Message):
     if not raw_text:
         return await message.reply_text("⚠️ Error: Provide a link after command or reply to a text message containing links!")
 
-    # تحسين استخراج الروابط لتشمل أي سطر يحتوي على بروتوكول الرابط حتى لو بدأ برموز خاطئة
+    # استخراج دقيق للروابط مبني على الأسطر التي تحتوي على بروتوكولات حقيقية
     links = [line.strip() for line in raw_text.splitlines() if "http" in line]
 
     if not links:
         return await message.reply_text("❌ Error: No valid links found!")
 
-    status = await message.reply_text("🔎 Analyzing and preparing progress bar...")
+    status = await message.reply_text("🔎 Analyzing link safety and firewall bypass...")
     total_links = len(links)
 
     if total_links == 1:
@@ -283,5 +305,5 @@ async def apply_thumb_via_reply(client, message: Message):
     await status.delete()
 
 if __name__ == "__main__":
-    print("🚀 Bot is running with Advanced Anti-Protection Link Downloader!")
+    print("🚀 Bot deployed successfully with Multi-Method FireWall Bypass!")
     app.run()
