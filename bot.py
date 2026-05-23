@@ -2,7 +2,7 @@ import os
 import time
 import asyncio
 import subprocess
-import mimetypes
+import re
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from dotenv import load_dotenv
@@ -24,7 +24,6 @@ QUALITY_SETTINGS = {
     "720p": {"scale": "1280:720", "crf": "24", "bitrate": "192k"}
 }
 
-# --- دالة شريط التقدم الفعلي ---
 def create_progress_bar(current, total, status_text, start_time):
     now = time.time()
     diff = now - start_time
@@ -45,12 +44,11 @@ async def progress_callback(current, total, client, message, status_text, start_
         try: await message.edit_text(bar)
         except: pass
 
-# --- دالة التقطيع والرفع التلقائي للأحجام الضخمة ---
 async def split_and_upload_video(client, message, status, file_path, caption_text):
     file_size = os.path.getsize(file_path)
     if file_size <= MAX_TG_SIZE:
         start_time = time.time()
-        await message.reply_video(video=file_path, caption=caption_text, progress=progress_callback, progress_args=(client, status, "Uploading video", start_time))
+        await message.reply_video(video=file_path, caption=caption_text, progress=progress_callback, progress_args=(client, status, "Uploading video to Telegram", start_time))
         return
 
     await status.edit_text("✂️ File is larger than 2GB! Splitting video automatically...")
@@ -77,37 +75,101 @@ async def split_and_upload_video(client, message, status, file_path, caption_tex
             await message.reply_video(video=part_output, caption=f"{caption_text}\n🧩 **Part:** {i+1}/{num_parts}", progress=progress_callback, progress_args=(client, status, f"Uploading part {i+1}", start_time))
             os.remove(part_output)
 
-# --- 1. أمر البداية ---
 @app.on_message(filters.command("start"))
-async def start(client, message: Message):
-    await message.reply_text(
-        "👋 Welcome to the Ultimate Media Leech & Compressor Bot!\n\n"
-        "💡 **How to use:**\n"
-        "• `/leechkmd [link]` - Download direct link\n"
-        "• `/torrentkmd [magnet/file]` - Download torrent\n"
-        "• Reply with `/compressvideo` on any video to change resolution\n"
-        "• Reply with `/thumbchange` on any video after sending a photo to change thumbnail."
-    )
+async def start_silent(client, message: Message):
+    pass
 
-# --- 2. معالجة أمر الـ Leechkmd (الروابط المباشرة) ---
+# --- دالة التحميل الذكية والمطورة للروابط المعقدة ---
+async def process_single_link(client, message, status, target_link, chat_id, user_id):
+    # تنظيف الرابط تلقائياً لو بيبدأ بـ حروف أو أرقام غلط مثل (2/https)
+    target_link = re.sub(r'^.*?https?://', 'https://', target_link)
+    
+    user_download_dir = f"dl_{chat_id}_{user_id}_{int(time.time())}"
+    os.makedirs(user_download_dir, exist_ok=True)
+
+    if any(x in target_link for x in ["youtube.com", "youtu.be", "facebook.com", "instagram.com", "tiktok.com", "twitter.com"]):
+        await status.edit_text(f"⚡ Social Media link detected! Extracting via YT-DLP...\n🔗 `{target_link[:50]}...`")
+        output_template = os.path.join(user_download_dir, "%(title)s.%(ext)s")
+        cmd = ["yt-dlp", "-f", "b[ext=mp4]/b", "-o", output_template, target_link]
+    else:
+        await status.edit_text(f"⏳ Downloading direct link via Aria2 (Anti-Protection Mode)...\n🔗 `{target_link[:50]}...`")
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        cmd = [
+            "aria2c", 
+            f"--dir={user_download_dir}", 
+            f"--user-agent={user_agent}", 
+            "--max-connection-per-server=16", 
+            "--split=16",
+            "--check-certificate=false",
+            "--retry-wait=5",
+            "--max-tries=5",
+            target_link  # تمرير الرابط كمتغير نقي داخل مصفوفة الحماية لمنع كسر علامة &
+        ]
+
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = await process.communicate()
+
+    if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
+        error_msg = stderr.decode().strip() if stderr else "Network Block or Link Expired"
+        await status.edit_text(f"❌ **Download Failed!**\n🔗 `{target_link[:60]}...`\n\nℹ️ **Reason:** {error_msg[:100]}")
+        try: os.rmdir(user_download_dir)
+        except: pass
+        return False
+
+    await status.edit_text("📤 Download finished successfully! Preparing to upload...")
+    for root, dirs, files in os.walk(user_download_dir):
+        for file in files:
+            file_path = os.path.join(root, file)
+            caption = f"🎬 **File Loaded:** `{file}`\n👤 **By:** {message.from_user.mention}"
+            try:
+                await split_and_upload_video(client, message, status, file_path, caption)
+            except Exception as e:
+                await message.reply_text(f"❌ Upload Error: `{str(e)}`")
+            if os.path.exists(file_path): os.remove(file_path)
+
+    try:
+        import shutil
+        shutil.rmtree(user_download_dir)
+    except: pass
+    return True
+
 @app.on_message(filters.command("leechkmd"))
 async def handle_leech_cmd(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
-    target_link = None
+    raw_text = ""
 
     if len(message.command) > 1:
-        target_link = message.text.split(None, 1)[1].strip()
+        raw_text = message.text.split(None, 1)[1].strip()
     elif message.reply_to_message and message.reply_to_message.text:
-        target_link = message.reply_to_message.text.strip()
+        raw_text = message.reply_to_message.text.strip()
 
-    if not target_link or not target_link.startswith("http"):
-        return await message.reply_text("⚠️ Error: Provide a link after the command or reply to a link message!")
+    if not raw_text:
+        return await message.reply_text("⚠️ Error: Provide a link after command or reply to a text message containing links!")
 
-    status = await message.reply_text("⏳ Initializing download from direct link...")
-    await download_and_process_aria(client, message, status, target_link, chat_id, user_id)
+    # تحسين استخراج الروابط لتشمل أي سطر يحتوي على بروتوكول الرابط حتى لو بدأ برموز خاطئة
+    links = [line.strip() for line in raw_text.splitlines() if "http" in line]
 
-# --- 3. معالجة أمر Torrentkmd (ملفات وماجنت) ---
+    if not links:
+        return await message.reply_text("❌ Error: No valid links found!")
+
+    status = await message.reply_text("🔎 Analyzing and preparing progress bar...")
+    total_links = len(links)
+
+    if total_links == 1:
+        await process_single_link(client, message, status, links[0], chat_id, user_id)
+        await status.delete()
+    else:
+        await status.edit_text(f"📋 Found {total_links} links. Starting batch processing...")
+        await asyncio.sleep(2)
+        for index, link in enumerate(links, start=1):
+            await status.edit_text(f"🔄 Processing link [{index}/{total_links}]...")
+            try:
+                await process_single_link(client, message, status, link, chat_id, user_id)
+            except Exception as e:
+                await message.reply_text(f"⚠️ Error on link {index}: `{str(e)}`")
+        await status.edit_text(f"✅ All {total_links} links have been processed successfully!")
+
 @app.on_message(filters.command("torrentkmd"))
 async def handle_torrent_cmd(client, message: Message):
     chat_id = message.chat.id
@@ -120,130 +182,106 @@ async def handle_torrent_cmd(client, message: Message):
     elif message.reply_to_message:
         reply_msg = message.reply_to_message
         if reply_msg.document and reply_msg.document.file_name.endswith(".torrent"):
-            status = await message.reply_text("⏳ Downloading .torrent file from Telegram...")
+            status = await message.reply_text("⏳ Downloading .torrent file...")
             target_input = await reply_msg.download()
             is_file = True
         elif reply_msg.text:
             target_input = reply_msg.text.strip()
 
     if not target_input:
-        return await message.reply_text("⚠️ Error: Provide a magnet link after the command or reply to a `.torrent` file!")
+        return await message.reply_text("⚠️ Error: Provide magnet link or reply to a `.torrent` file!")
 
-    if not is_file and not (target_input.startswith("magnet:") or target_input.startswith("http")):
-        return await message.reply_text("❌ Error: Invalid magnet link format.")
-
-    status = await message.reply_text("⏳ Connecting to seeders via Aria2...")
-    await download_and_process_aria(client, message, status, target_input, chat_id, user_id, is_file)
-
-# --- دالة معالجة وتحميل Aria2 المشتركة ---
-async def download_and_process_aria(client, message, status, target, chat_id, user_id, is_file=False):
-    user_download_dir = f"dl_{chat_id}_{user_id}"
+    status = await message.reply_text("⏳ Connecting to torrent network...")
+    user_download_dir = f"dl_{chat_id}_{user_id}_torrent"
     os.makedirs(user_download_dir, exist_ok=True)
 
-    cmd = ["aria2c", f"--dir={user_download_dir}", "--seed-time=0", "--max-connection-per-server=16", target]
+    cmd = ["aria2c", f"--dir={user_download_dir}", "--seed-time=0", target_input]
     process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     await process.wait()
 
     if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
-        await status.edit_text("❌ Download failed. Check link or seeders status.")
-        if is_file and os.path.exists(target): os.remove(target)
+        await status.edit_text("❌ Torrent download failed.")
+        if is_file and os.path.exists(target_input): os.remove(target_input)
         return
 
-    await status.edit_text("📤 Download finished! Preparing smart upload progress bar...")
-
+    await status.edit_text("📤 Torrent downloaded! Uploading with progress bar...")
     for root, dirs, files in os.walk(user_download_dir):
         for file in files:
             file_path = os.path.join(root, file)
-            mime_type, _ = mimetypes.guess_type(file_path)
-            caption = f"🎬 File uploaded successfully!\n📄 Name: `{file}`\n👤 Requested by: {message.from_user.mention}"
-
-            try:
-                await split_and_upload_video(client, message, status, file_path, caption)
-            except Exception as e:
-                await message.reply_text(f"❌ Upload Error: `{str(e)}`")
-            
+            caption = f"🎬 **Torrent File:** `{file}`"
+            await split_and_upload_video(client, message, status, file_path, caption)
             if os.path.exists(file_path): os.remove(file_path)
 
     try:
         import shutil
         shutil.rmtree(user_download_dir)
-        if is_file and os.path.exists(target): os.remove(target)
+        if is_file and os.path.exists(target_input): os.remove(target_input)
     except: pass
     await status.delete()
 
-# --- 4. معالجة أمر Compressvideo بالرد لتوليد أزرار الجودات ---
-@app.on_message(filters.command("compressvideo"))
+@app.on_message(filters.command("compresskmd"))
 async def ask_for_quality(client, message: Message):
     if not message.reply_to_message or not (message.reply_to_message.video or message.reply_to_message.document):
-        return await message.reply_text("⚠️ Error: You must reply with this command to the video you want to compress!")
-
+        return await message.reply_text("⚠️ Error: Reply to a video!")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎬 240p", callback_data=f"q_240p_{message.reply_to_message.id}"), InlineKeyboardButton("🎬 360p", callback_data=f"q_360p_{message.reply_to_message.id}")],
         [InlineKeyboardButton("🎬 480p", callback_data=f"q_480p_{message.reply_to_message.id}"), InlineKeyboardButton("🎬 720p", callback_data=f"q_720p_{message.reply_to_message.id}")]
     ])
-    await message.reply_text(f"⚙️ **Hello {message.from_user.first_name}, choose your preferred compression resolution:**", reply_markup=keyboard)
+    await message.reply_text("⚙️ Choose compression quality:", reply_markup=keyboard)
 
 @app.on_callback_query(filters.regex(r"^q_"))
 async def start_compression_callback(client, callback_query: CallbackQuery):
     data_parts = callback_query.data.split("_")
     quality, target_msg_id = data_parts[1], int(data_parts[2])
     chat_id, user_id = callback_query.message.chat.id, callback_query.from_user.id
-    
     try: target_msg = await client.get_messages(chat_id, target_msg_id)
-    except: return await callback_query.answer("❌ Original video message not found.", show_alert=True)
+    except: return await callback_query.answer("❌ Video not found.")
 
     status = callback_query.message
-    await status.edit_text(f"📥 Downloading source video file for {quality} conversion...")
-
+    await status.edit_text("📥 Fetching original video...")
     start_time = time.time()
-    input_file = await target_msg.download(progress=progress_callback, progress_args=(client, status, "Downloading original video", start_time))
+    input_file = await target_msg.download(progress=progress_callback, progress_args=(client, status, "Downloading original", start_time))
     
     output_file = f"compressed_{quality}_{chat_id}_{user_id}.mp4"
-    await status.edit_text(f"⚡ Encoding to x265 ({quality})... please hold on.")
-    
+    await status.edit_text(f"⚡ Encoding to x265 ({quality})...")
     settings = QUALITY_SETTINGS[quality]
     cmd = ["ffmpeg", "-i", input_file, "-vf", f"scale={settings['scale']}", "-vcodec", "libx265", "-crf", settings['crf'], "-preset", "faster", "-acodec", "aac", "-b:a", settings['bitrate'], output_file, "-y"]
     process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     await process.wait()
 
     if os.path.exists(output_file):
-        caption = f"🎬 Compressed Successfully!\n⚙️ **Quality:** {quality} (HEVC x265)\n👤 Requested by: {callback_query.from_user.mention}"
-        await split_and_upload_video(client, target_msg, status, output_file, caption)
+        await split_and_upload_video(client, target_msg, status, output_file, f"🎬 Compressed to {quality}!")
         os.remove(output_file)
     else:
-        await status.edit_text("❌ Compression processing failed.")
-
+        await status.edit_text("❌ Compression failed.")
     if os.path.exists(input_file): os.remove(input_file)
     await status.delete()
 
-# --- 5. معالجة أمر Thumbchange بالرد لتغيير الـ Thumbnail ---
 @app.on_message(filters.photo)
 async def save_photo_thumb(client, message: Message):
     thumb_path = f"thumb_{message.chat.id}_{message.from_user.id}.jpg"
     await message.download(file_name=thumb_path)
     user_thumbs[(message.chat.id, message.from_user.id)] = thumb_path
-    await message.reply_text("🖼️ Thumbnail saved! Now reply to your video with `/thumbchange` to apply it.")
+    await message.reply_text("🖼️ Thumbnail saved! Reply to a video with `/thumbkmd`.")
 
-@app.on_message(filters.command("thumbchange"))
+@app.on_message(filters.command("thumbkmd"))
 async def apply_thumb_via_reply(client, message: Message):
     chat_id, user_id = message.chat.id, message.from_user.id
     thumb_path = user_thumbs.get((chat_id, user_id))
+    if not thumb_path: return await message.reply_text("⚠️ Send a photo first!")
+    if not message.reply_to_message: return await message.reply_text("⚠️ Reply to a video!")
 
-    if not thumb_path: return await message.reply_text("⚠️ Send a photo first to use it as thumbnail.")
-    if not message.reply_to_message: return await message.reply_text("⚠️ Reply with this command to the video target.")
-
-    status = await message.reply_text("⏳ Processing video metadata with new thumbnail...")
+    status = await message.reply_text("⏳ Applying thumbnail...")
     start_time = time.time()
-    input_file = await message.reply_to_message.download(progress=progress_callback, progress_args=(client, status, "Downloading video file", start_time))
+    input_file = await message.reply_to_message.download(progress=progress_callback, progress_args=(client, status, "Downloading video", start_time))
     
     start_time = time.time()
-    await message.reply_to_message.reply_video(video=input_file, thumb=thumb_path, caption=f"🖼️ Thumbnail updated successfully!\n👤 Requested by: {message.from_user.mention}", progress=progress_callback, progress_args=(client, status, "Uploading custom thumbnail video", start_time))
-    
+    await message.reply_to_message.reply_video(video=input_file, thumb=thumb_path, caption="🖼️ Thumbnail Updated!", progress=progress_callback, progress_args=(client, status, "Uploading", start_time))
     if os.path.exists(thumb_path): os.remove(thumb_path)
     if os.path.exists(input_file): os.remove(input_file)
     user_thumbs[(chat_id, user_id)] = None
     await status.delete()
 
 if __name__ == "__main__":
-    print("🚀 Bot deployed successfully with custom kmd commands!")
+    print("🚀 Bot is running with Advanced Anti-Protection Link Downloader!")
     app.run()
