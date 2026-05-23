@@ -1,26 +1,40 @@
+# Don't Remove Credit Tg - @VJ_Bots
+# Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
+# Ask Doubt on telegram @KingVJ01
+
 import os
+import re
+import sys
+import json
 import time
 import asyncio
+import requests
 import subprocess
-import re
 import shutil
 from urllib.parse import urlparse, unquote
+
+import core as helper
+from utils import progress_bar
+from vars import API_ID, API_HASH, BOT_TOKEN
+from aiohttp import ClientSession
+from pyromod import listen
+from subprocess import getstatusoutput
+
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from dotenv import load_dotenv
+from pyrogram.errors import FloodWait
+from pyrogram.errors.exceptions.bad_request_400 import StickerEmojiInvalid
 
-load_dotenv()
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = Client(
+    "bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN)
 
-app = Client("video_ultimate_bot", api_id=int(API_ID), api_hash=API_HASH, bot_token=BOT_TOKEN)
-
+# مخازن البيانات المؤقتة للأوامر
 user_thumbs = {}
-MAX_TG_SIZE = 2000 * 1024 * 1024  # 2 جيجابايت
-
-active_tasks = {}
 poster_pending_data = {}
+MAX_TG_SIZE = 2000 * 1024 * 1024  # 2 جيجابايت
 
 QUALITY_SETTINGS = {
     "240p": {"scale": "426:240", "crf": "30", "bitrate": "64k"},
@@ -31,6 +45,7 @@ QUALITY_SETTINGS = {
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
+# 📊 [العداد المتقدم الخارق]
 def create_progress_bar(current, total, status_text, start_time):
     now = time.time()
     diff = now - start_time
@@ -51,11 +66,14 @@ async def progress_callback(current, total, client, message, status_text, start_
         try: await message.edit_text(bar)
         except: pass
 
-async def split_and_upload_video(client, message, status, file_path, caption_text):
+# ✂️ [دالة التقسيم والرفع التلقائي]
+async def split_and_upload_video(client, message, status, file_path, caption_text, thumb_path="no"):
     file_size = os.path.getsize(file_path)
+    current_thumb = None if thumb_path == "no" else thumb_path
+    
     if file_size <= MAX_TG_SIZE:
         start_time = time.time()
-        await message.reply_video(video=file_path, caption=caption_text, progress=progress_callback, progress_args=(client, status, "Uploading video to Telegram", start_time))
+        await message.reply_video(video=file_path, thumb=current_thumb, caption=caption_text, progress=progress_callback, progress_args=(client, status, "Uploading video to Telegram", start_time))
         return
 
     await status.edit_text("✂️ File is larger than 2GB! Splitting video automatically...")
@@ -79,13 +97,14 @@ async def split_and_upload_video(client, message, status, file_path, caption_tex
         if os.path.exists(part_output):
             await status.edit_text(f"📤 Uploading part [{i+1}/{num_parts}]...")
             start_time = time.time()
-            await message.reply_video(video=part_output, caption=f"{caption_text}\n🧩 **Part:** {i+1}/{num_parts}", progress=progress_callback, progress_args=(client, status, f"Uploading part {i+1}", start_time))
+            await message.reply_video(video=part_output, thumb=current_thumb, caption=f"{caption_text}\n🧩 **Part:** {i+1}/{num_parts}", progress=progress_callback, progress_args=(client, status, f"Uploading part {i+1}", start_time))
             os.remove(part_output)
 
-@app.on_message(filters.command("start"))
-async def start_handler(client, message: Message):
-    if len(message.command) > 1 and message.chat.type == message.chat.type.PRIVATE:
-        payload = message.command[1]
+
+@bot.on_message(filters.command(["start"]))
+async def start(bot: Client, m: Message):
+    if len(m.command) > 1 and m.chat.type == m.chat.type.PRIVATE:
+        payload = m.command[1]
         if payload.startswith("getposter_"):
             poster_id = payload.replace("getposter_", "")
             data = poster_pending_data.get(poster_id)
@@ -105,30 +124,44 @@ async def start_handler(client, message: Message):
                     f"🍿 **الإعلان الرسمي (البرومو):**\n🔗 {data['trailer']}\n\n"
                     f"🖥️ **مشاهدة الفيلم:**\n[الذهاب لصفحة المشاهدة]({data['watch_url']})"
                 )
-                try: await message.reply_photo(photo=data['image'], caption=poster_text)
-                except Exception: await message.reply_text(poster_text, disable_web_page_preview=False)
+                try: await m.reply_photo(photo=data['image'], caption=poster_text)
+                except Exception: await m.reply_text(poster_text, disable_web_page_preview=False)
                 return
-    if message.chat.type == message.chat.type.PRIVATE:
-        await message.reply_text("👋 أهلاً بك في بوت التحميل والخدمات المتكاملة المطور!")
+            else:
+                return await m.reply_text("⚠️ عذراً، انتهت صلاحية بيانات هذا البوستر.")
 
-@app.on_message(filters.command("poster"))
+    await m.reply_text(f"<b>Hello {m.from_user.mention} 👋\n\n I Am A Bot For Download Links From Your **.TXT** File And Then Upload That File On Telegram So Basically If You Want To Use Me First Send Me /upload Command And Then Follow Few Steps..\n\nUse /stop to stop any ongoing task.</b>")
+
+
+@bot.on_message(filters.command("stop"))
+async def restart_handler(_, m):
+    await m.reply_text("**Stopped**🚦", True)
+    os.execl(sys.executable, sys.executable, *sys.argv)
+
+
+# 🎬 [أمر البوستر الداخلي الفوري والنظيف] 🎬
+@bot.on_message(filters.command("poster"))
 async def generate_poster_cmd(client, message: Message):
     user_id = message.from_user.id
     search_query = ""
     if len(message.command) > 1: search_query = message.text.split(None, 1)[1].strip()
     elif message.reply_to_message and message.reply_to_message.text: search_query = message.reply_to_message.text.strip()
 
-    if not search_query: return await message.reply_text("⚠️ اكتب اسم العمل بعد الأمر، مثال:\n`/poster حظ سعيد`")
+    if not search_query: 
+        return await message.reply_text("⚠️ اكتب اسم العمل بعد الأمر، مثال:\n`/poster حظ سعيد`")
+    
     poster_id = f"{user_id}_{int(time.time())}"
     
+    # القالب الداخلي الذكي الافتراضي
     poster_pending_data[poster_id] = {
         "title": search_query,
         "story": "يدور العمل في إطار مشوق ومثير حول تفاصيل غير متوقعة تغير مسار الأبطال تماماً.",
-        "section": "أفلام عربية / أجنبية", "genre": "دراما • كوميدي", "director": "مخرج العمل المعتمد",
-        "cast": "نخبة من ألمع النجوم", "year": "2026", "country": "مصر", "age_rating": "+12", "quality": "Full HD",
-        "trailer": "http://www.youtube.com/watch?v=chiAM271c4M", "watch_url": "https://t.me", "image": "https://elcinema.com/shared/images/placeholder_work.png"
+        "section": "أفلام عربية / أجنبية", "genre": "دراما • كوميدي • تشويق", "director": "مخرج العمل المعتمد",
+        "cast": "نخبة من ألمع النجوم", "year": "2026", "country": "مصر / عالمي", "age_rating": "+12", "quality": "Full HD",
+        "trailer": "http://www.youtube.com/watch?v=chiAM271c4M", "watch_url": "https://t.me/Series_World", "image": "https://elcinema.com/shared/images/placeholder_work.png"
     }
 
+    # تخصيص خاص لفيلم حظ سعيد كمثال داخلي
     if "حظ سعيد" in search_query:
         poster_pending_data[poster_id].update({
             "title": "حظ سعيد",
@@ -140,175 +173,222 @@ async def generate_poster_cmd(client, message: Message):
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎬 عرض بوستر وتفاصيل الفيلم (tDm)", url=f"https://t.me/{bot_username}?start=getposter_{poster_id}")]])
     await message.reply_text(f"🔍 تم العثور على معلومات: **{search_query}**\nاضغط أسفله للعرض في الخاص.", reply_markup=keyboard)
 
-async def process_single_link(client, message, status, target_link, chat_id, user_id):
-    task_key = (chat_id, user_id)
-    target_link = target_link.strip().replace("\r", "").replace("\n", "")
-    target_link = re.sub(r'^.*?https?://', 'https://', target_link)
-    
-    user_download_dir = f"dl_{chat_id}_{user_id}_{int(time.time())}"
-    os.makedirs(user_download_dir, exist_ok=True)
-    output_file_path = os.path.join(user_download_dir, "video.mp4")
 
-    control_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Download", callback_data=f"cancel_{chat_id}_{user_id}")]])
-
-    # 🛡️ [المرحلة 1]: محاولة التحميل التقليدي الذكي أولاً بـ YT-DLP
-    await status.edit_text(f"🚀 [Engine 1] Launching Intelligent Bypass...\n🔗 `{target_link[:35]}...`", reply_markup=control_keyboard)
-    cmd_ytdl = ["yt-dlp", "--user-agent", USER_AGENT, "--no-check-certificate", "-f", "b[ext=mp4]/b/best", "-o", output_file_path, target_link]
-    try:
-        process = await asyncio.create_subprocess_exec(*cmd_ytdl, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        active_tasks[task_key] = {"process": process, "dir": user_download_dir}
-        await process.wait()
-    except Exception: pass
-
-    # 🔥 [المرحلة 2]: محرك FFmpeg الخارق لكسر حماية الـ Stream والبث المباشر والـ HLS المتقطع
-    if task_key in active_tasks and (not os.path.exists(user_download_dir) or not os.listdir(user_download_dir) or os.path.getsize(output_file_path) < 1000):
-        await status.edit_text("⚡ [Engine 2] Activating Heavy FFmpeg Stream Ripper...", reply_markup=control_keyboard)
-        cmd_ffmpeg = [
-            "ffmpeg", "-headers", f"User-Agent: {USER_AGENT}\r\n", 
-            "-i", target_link, "-c", "copy", "-bsf:a", "aac_adtstoasc", output_file_path, "-y"
-        ]
-        try:
-            process_ff = await asyncio.create_subprocess_exec(*cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            active_tasks[task_key] = {"process": process_ff, "dir": user_download_dir}
-            await process_ff.wait()
-        except Exception: pass
-
-    if task_key not in active_tasks: return False
-
-    if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir) or os.path.getsize(output_file_path) < 1000:
-        await status.edit_text(f"❌ **التحميل فشل تماماً!**\n\nℹ️ **السبب المباشر:** الموقع قام بحظر خوادم الاستضافة (Cloud Block)، أو أن الرابط منتهي الصلاحية ويحتاج لتحديث من المتصفح.")
-        try: shutil.rmtree(user_download_dir)
-        except: pass
-        if task_key in active_tasks: del active_tasks[task_key]
-        return False
-
-    await status.edit_text("📥 Download successful! Preparing Telegram transmission...")
-    for root, dirs, files in os.walk(user_download_dir):
-        for file in files:
-            file_path = os.path.join(root, file)
-            caption = f"🎬 **File Loaded:** `{file}`\n👤 **By:** {message.from_user.mention}"
-            try: await split_and_upload_video(client, message, status, file_path, caption)
-            except Exception as e: await message.reply_text(f"❌ Upload Error: `{str(e)}`")
-            if os.path.exists(file_path): os.remove(file_path)
-
-    try: shutil.rmtree(user_download_dir)
-    except: pass
-    if task_key in active_tasks: del active_tasks[task_key]
-    return True
-
-@app.on_callback_query(filters.regex(r"^cancel_"))
-async def cancel_download_callback(client, callback_query: CallbackQuery):
-    data_parts = callback_query.data.split("_")
-    chat_id, user_id = int(data_parts[1]), int(data_parts[2])
-    task_key = (chat_id, user_id)
-    if task_key in active_tasks:
-        task_info = active_tasks[task_key]
-        process, directory = task_info["process"], task_info["dir"]
-        del active_tasks[task_key]
-        try: process.terminate()
-        except: pass
-        try: shutil.rmtree(directory)
-        except: pass
-        await callback_query.message.edit_text("❌ **Cancelled!**")
-    await callback_query.answer()
-
-@app.on_message(filters.command("leechkmd"))
-async def handle_leech_cmd(client, message: Message):
-    chat_id, user_id = message.chat.id, message.from_user.id
-    raw_text = ""
-    if len(message.command) > 1: raw_text = message.text.split(None, 1)[1].strip()
-    elif message.reply_to_message and message.reply_to_message.text: raw_text = message.reply_to_message.text.strip()
-
-    if not raw_text: return await message.reply_text("⚠️ Error: Provide a link!")
-    links = [line.strip() for line in raw_text.splitlines() if "http" in line]
-    if not links: return await message.reply_text("❌ Error: No valid links found!")
-
-    status = await message.reply_text("🔎 Analyzing firewalls and server bypass cookies...")
-    await process_single_link(client, message, status, links[0], chat_id, user_id)
-    try: await status.delete()
-    except: pass
-
-@app.on_message(filters.command("torrentkmd"))
-async def handle_torrent_cmd(client, message: Message):
-    chat_id, user_id = message.chat.id, message.from_user.id
-    target_input = None
-    if len(message.command) > 1: target_input = message.text.split(None, 1)[1].strip()
-    elif message.reply_to_message and message.reply_to_message.text: target_input = message.reply_to_message.text.strip()
-
-    if not target_input: return await message.reply_text("⚠️ Error: Provide magnet link!")
-    status = await message.reply_text("⏳ Connecting to torrent network...")
-    user_download_dir = f"dl_{chat_id}_{user_id}_torrent"
-    os.makedirs(user_download_dir, exist_ok=True)
-
-    try:
-        cmd = ["aria2c", f"--dir={user_download_dir}", "--seed-time=0", target_input]
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        await process.wait()
-    except Exception: pass
-
-    if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
-        await status.edit_text("❌ Torrent download failed.")
-        return
-
-    for root, dirs, files in os.walk(user_download_dir):
-        for file in files:
-            file_path = os.path.join(root, file)
-            await split_and_upload_video(client, message, status, file_path, f"🎬 **Torrent:** `{file}`")
-    try: shutil.rmtree(user_download_dir)
-    except: pass
-    await status.delete()
-
-@app.on_message(filters.command(["compresskmd", "composer"]))
+# ⚙️ [أوامر كومبريسور وضغط وتقليل حجم الفيديو]
+@bot.on_message(filters.command(["compresskmd", "composer"]))
 async def ask_for_quality(client, message: Message):
     if not message.reply_to_message or not (message.reply_to_message.video or message.reply_to_message.document):
-        return await message.reply_text("⚠️ Error: Please reply to a video!")
+        return await message.reply_text("⚠️ Error: Please reply to a video message to compress it!")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎬 240p", callback_data=f"q_240p_{message.reply_to_message.id}"), InlineKeyboardButton("🎬 360p", callback_data=f"q_360p_{message.reply_to_message.id}")],
         [InlineKeyboardButton("🎬 480p", callback_data=f"q_480p_{message.reply_to_message.id}"), InlineKeyboardButton("🎬 720p", callback_data=f"q_720p_{message.reply_to_message.id}")]
     ])
     await message.reply_text("⚙️ Choose compression quality:", reply_markup=keyboard)
 
-@app.on_callback_query(filters.regex(r"^q_"))
+
+@bot.on_callback_query(filters.regex(r"^q_"))
 async def start_compression_callback(client, callback_query: CallbackQuery):
     data_parts = callback_query.data.split("_")
     quality, target_msg_id = data_parts[1], int(data_parts[2])
     chat_id, user_id = callback_query.message.chat.id, callback_query.from_user.id
     try: target_msg = await client.get_messages(chat_id, target_msg_id)
     except: return
+
     status = callback_query.message
     await status.edit_text("📥 Fetching original video...")
-    input_file = await target_msg.download()
+    start_time = time.time()
+    input_file = await target_msg.download(progress=progress_callback, progress_args=(client, status, "Downloading original", start_time))
+    
     output_file = f"compressed_{quality}_{chat_id}_{user_id}.mp4"
     await status.edit_text(f"⚡ Encoding to x265 ({quality})...")
     settings = QUALITY_SETTINGS[quality]
+    
     try:
         cmd = ["ffmpeg", "-i", input_file, "-vf", f"scale={settings['scale']}", "-vcodec", "libx265", "-crf", settings['crf'], "-preset", "faster", "-acodec", "aac", "-b:a", settings['bitrate'], output_file, "-y"]
         process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         await process.wait()
     except Exception: pass
+
     if os.path.exists(output_file):
         await split_and_upload_video(client, target_msg, status, output_file, f"🎬 Compressed to {quality}!")
         os.remove(output_file)
+    else:
+        await status.edit_text("❌ Compression failed.")
     if os.path.exists(input_file): os.remove(input_file)
-    await status.delete()
+    try: await status.delete()
+    except: pass
 
-@app.on_message(filters.photo)
-async def save_photo_thumb(client, message: Message):
-    thumb_path = f"thumb_{message.chat.id}_{message.from_user.id}.jpg"
-    await message.download(file_name=thumb_path)
-    user_thumbs[(message.chat.id, message.from_user.id)] = thumb_path
-    await message.reply_text("🖼️ Thumbnail saved!")
 
-@app.on_message(filters.command("thumbkmd"))
-async def apply_thumb_via_reply(client, message: Message):
-    chat_id, user_id = message.chat.id, message.from_user.id
-    thumb_path = user_thumbs.get((chat_id, user_id))
-    if not thumb_path or not message.reply_to_message: return await message.reply_text("⚠️ Reply to a video and ensure photo is sent!")
-    status = await message.reply_text("⏳ Applying thumbnail...")
-    input_file = await message.reply_to_message.download()
-    await message.reply_to_message.reply_video(video=input_file, thumb=thumb_path, caption="🖼️ Thumbnail Updated!")
-    if os.path.exists(input_file): os.remove(input_file)
-    await status.delete()
+# 🛠️ [تحميل الـ TXT الأساسي والمدرع بكسر الحظر وخطة الطوارئ]
+@bot.on_message(filters.command(["upload"]))
+async def upload(bot: Client, m: Message):
+    editable = await m.reply_text('𝕤ᴇɴᴅ ᴛxᴛ ғɪλᴇ ⚡️')
+    input: Message = await bot.listen(editable.chat.id)
+    x = await input.download()
+    await input.delete(True)
 
-if __name__ == "__main__":
-    app.run()
+    try:
+       with open(x, "r") as f:
+           content = f.read()
+       content = content.split("\n")
+       links = []
+       for i in content:
+           i = i.strip()
+           if "://" in i:
+               links.append(i.split("://", 1))
+       os.remove(x)
+    except Exception as e:
+           await m.reply_text(f"**Invalid file input.**\nError: `{str(e)}`")
+           try: os.remove(x)
+           except: pass
+           return
+    
+    if not links:
+        return await m.reply_text("❌ **الملف فارغ ولا يحتوي على روابط صحيحة!**")
+   
+    await editable.edit(f"**𝕋ᴏᴛᴀλ ʟɪɴᴋ𝕤 ғᴏᴜɴᴅ ᴀʀᴇ🔗🔗** **{len(links)}**\n\n**𝕊ᴇɴᴅ 𝔽ʀᴏᴍ ᴡʜᴇʀे ʏᴏُ ᴡᴀɴᴛ ᴛᴏ ᴅᴏᴡɴλᴏαᴅ ɪɴɪᴛɪαλ ɪ𝕤** **1**")
+    input0: Message = await bot.listen(editable.chat.id)
+    raw_text = input0.text
+    await input0.delete(True)
+
+    await editable.edit("**Now Please Send Me Your Batch Name**")
+    input1: Message = await bot.listen(editable.chat.id)
+    raw_text0 = input1.text
+    await input1.delete(True)
+    
+    await editable.edit("**𝔼ɴᴛᴇʀ ʀᴇ𝕤ᴏλᴜᴛɪᴏɴ📸**\n144,240,360,480,720,1080 please choose quality")
+    input2: Message = await bot.listen(editable.chat.id)
+    raw_text2 = input2.text
+    await input2.delete(True)
+    
+    try:
+        if raw_text2 == "144": res = "256x144"
+        elif raw_text2 == "240": res = "426x240"
+        elif raw_text2 == "360": res = "640x360"
+        elif raw_text2 == "480": res = "854x480"
+        elif raw_text2 == "720": res = "1280x720"
+        elif raw_text2 == "1080": res = "1920x1080" 
+        else: res = "UN"
+    except Exception:
+        res = "UN"
+
+    await editable.edit("Now Enter A Caption to add caption on your uploaded file")
+    input3: Message = await bot.listen(editable.chat.id)
+    raw_text3 = input3.text
+    await input3.delete(True)
+    highlighter = f"️ ⁪⁬⁮⁮⁮"
+    if raw_text3 == 'Robin':
+        MR = highlighter 
+    else:
+        MR = raw_text3
+   
+    await editable.edit("Now send the Thumb url\nEg » `https://graph.org/file/ce1723991756e48c35aa1.jpg` \n Or if don't want thumbnail send = no")
+    input6 = await bot.listen(editable.chat.id)
+    raw_text6 = input6.text
+    await input6.delete(True)
+    await editable.delete()
+
+    thumb = raw_text6.strip()
+    if thumb.startswith("http://") or thumb.startswith("https://"):
+        getstatusoutput(f"wget '{thumb}' -O 'thumb.jpg'")
+        thumb = "thumb.jpg"
+    else:
+        thumb = "no"
+
+    try: count = 1 if len(links) == 1 else int(raw_text)
+    except: count = 1
+
+    try:
+        for i in range(count - 1, len(links)):
+            V = links[i][1].replace("file/d/","uc?export=download&id=").replace("www.youtube-nocookie.com/embed", "youtu.be").replace("?modestbranding=1", "").replace("/view?usp=sharing","")
+            url = "https://" + V
+
+            if "visionias" in url:
+                async with ClientSession() as session:
+                    async with session.get(url, headers={'User-Agent': USER_AGENT, 'Referer': 'http://www.visionias.in/'}) as resp:
+                        text = await resp.text()
+                        url = re.search(r"(https://.*?playlist.m3u8.*?)\"", text).group(1)
+
+            elif 'videos.classplusapp' in url:
+                try:
+                    url = requests.get(f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}', headers={'x-access-token': 'eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJpZCI6MzgzNjkyMTIsIm9yZ0lkIjoyNjA1LCJ0eXBlIjoxLCJtb2JpbGUiOiI5MTcwODI3NzQyODkiLCJuYW1lIjoiQWNlIiwiZW1haWwiOm51bGwsImlzRmlyc3RMb2dpbiI6dHJ1ZSwiZGVmYXVsdExhbmd1YWdlIjpudWxsLCJjb3VudHJ5Q29kZSI6IklOIiwiaXNJbnRlcm5hdGlvbmFsIjowLCJpYXQiOjE2NDMyODE4NzcsImV4cCI6MTY0Mzg4NjY3N30.hM33P2ai6ivdzxPPfm01LAd4JWv-vnrSxGXqvCirCSpUfhhofpeqyeHPxtstXwe0'}).json()['url']
+                except: pass
+
+            elif '/master.mpd' in url:
+                id = url.split("/")[-2]
+                url = "https://d26g5bnklkwsh4.cloudfront.net/" + id + "/master.m3u8"
+
+            name1 = links[i][0].replace("\t", "").replace(":", "").replace("/", "").replace("+", "").replace("#", "").replace("|", "").replace("@", "").replace("*", "").replace(".", "").replace("https", "").replace("http", "").strip()
+            name = f'{str(count).zfill(3)}) {name1[:60]}'
+
+            if "youtu" in url:
+                ytf = f"b[height<={raw_text2}][ext=mp4]/bv[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+            else:
+                ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
+
+            if "jw-prod" in url:
+                cmd = f'yt-dlp --user-agent "{USER_AGENT}" --no-check-certificate -o "{name}.mp4" "{url}"'
+            else:
+                cmd = f'yt-dlp --user-agent "{USER_AGENT}" --no-check-certificate -f "{ytf}" "{url}" -o "{name}.mp4"'
+
+            try:  
+                cc = f'**[📽️] Vid_ID:** {str(count).zfill(3)}.** {name1}{MR}.mkv\n**Batch** » **{raw_text0}**'
+                cc1 = f'**[📁] Pdf_ID:** {str(count).zfill(3)}. {name1}{MR}.pdf \n**Batch** » **{raw_text0}**'
+                
+                if "drive" in url:
+                    try:
+                        ka = await helper.download(url, name)
+                        await bot.send_document(chat_id=m.chat.id, document=ka, caption=cc1)
+                        count += 1
+                        os.remove(ka)
+                        time.sleep(1)
+                    except FloodWait as e:
+                        await asyncio.sleep(e.value)
+                        continue
+                
+                elif ".pdf" in url:
+                    try:
+                        cmd_pdf = f'yt-dlp --user-agent "{USER_AGENT}" -o "{name}.pdf" "{url}" -R 25 --fragment-retries 25'
+                        os.system(cmd_pdf)
+                        await bot.send_document(chat_id=m.chat.id, document=f'{name}.pdf', caption=cc1)
+                        count += 1
+                        os.remove(f'{name}.pdf')
+                    except FloodWait as e:
+                        await asyncio.sleep(e.value)
+                        continue
+                else:
+                    Show = f"**⥥ 🄳🄾🅆🄽🄻🄾🄰🄳🄸🄽🄶⬇️⬇️... »**\n\n**📝Name »** `{name}`\n❄`Quality » {raw_text2}`\n\n**🔗URL »** `{url}`"
+                    prog = await m.reply_text(Show)
+                    
+                    res_file = await helper.download_video(url, cmd, name)
+                    filename = res_file
+                    
+                    output_mp4 = f"{name}.mp4"
+                    if not res_file or not os.path.exists(output_mp4) or os.path.getsize(output_mp4) < 1000:
+                        await prog.edit(f"⚠️ خط الدفاع الأول فشل.. جاري سحب البث عبر محرك [FFmpeg Engine] لكسر الجدار الناري...")
+                        cmd_ffmpeg = [
+                            "ffmpeg", "-headers", f"User-Agent: {USER_AGENT}\r\n",
+                            "-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", output_mp4, "-y"
+                        ]
+                        process_ff = await asyncio.create_subprocess_exec(*cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        await process_ff.wait()
+                        filename = output_mp4
+
+                    if os.path.exists(filename) and os.path.getsize(filename) > 1000:
+                        await prog.delete(True)
+                        await split_and_upload_video(bot, m, prog, filename, cc, thumb)
+                        count += 1
+                        time.sleep(1)
+                    else:
+                        await prog.edit(f"❌ فشل تحميل هذا الرابط بجميع الطرق المتوفرة بسبب حظر جدار الحماية للموقع المستضيف.\n\n🔗 الرابط: `{url}`")
+                        time.sleep(2)
+
+            except Exception as e:
+                await m.reply_text(f"**downloading Interupted **\n{str(e)}\n**Name** » {name}\n**Link** » `{url}`")
+                continue
+
+    except Exception as e:
+        await m.reply_text(str(e))
+    await m.reply_text("**Done Boss😎**")
+
+bot.run()
