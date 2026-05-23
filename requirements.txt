@@ -1,7 +1,5 @@
 pyrogram
-tgcrypto
-ffmpeg-python
-aiofiles
-python-dotenv
+pyromod
 yt-dlp
 requests
+aiohttp
