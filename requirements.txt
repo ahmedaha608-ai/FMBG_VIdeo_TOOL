@@ -3,3 +3,4 @@ tgcrypto
 ffmpeg-python
 aiofiles
 python-dotenv
+yt-dlp
