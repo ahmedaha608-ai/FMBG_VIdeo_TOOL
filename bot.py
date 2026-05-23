@@ -2,7 +2,7 @@ import os
 import asyncio
 import mimetypes
 from pyrogram import Client, filters
-from pyrogram.types import Message, BotCommand
+from pyrogram.types import Message
 from dotenv import load_dotenv
 
 # تحميل متغيرات البيئة
@@ -12,73 +12,71 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not all([API_ID, API_HASH, BOT_TOKEN]):
-    print("❌ خطأ: يرجى إعداد متغيرات البيئة أولاً!")
+    print("❌ خطأ: يرجى إعداد متغيرات البيئة (API_ID, API_HASH, BOT_TOKEN) أولاً!")
     exit(1)
 
 app = Client("torrent_leech_bot", api_id=int(API_ID), api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # مخزن مؤقت لتتبع حالة التورنت لكل مستخدم داخل كل جروب بشكل منفرد
-# الصيغة: {(chat_id, user_id): 'waiting_torrent'}
 torrent_states = {}
 
-# أمر البداية
+# 1. أمر البداية
 @app.on_message(filters.command("start"))
 async def start(client, message: Message):
     await message.reply_text(
-        "👋 أهلاً بك في بوت تحميل التورنت الفوري!\n"
-        "استخدم الأمر /torrentleechKMD لبدء تحميل أي ملف تورنت أو رابط مغناطيسي."
+        "👋 أهلاً بك في بوت تحميل التورنت الفوري داخل المجموعات!\n\n"
+        "اضغط على الأمر /torrentleechkmd من القائمة لبدء التحميل الفعلي."
     )
 
-# تفعيل أمر التورنت المنفصل
-@app.on_message(filters.command("torrentleechKMD"))
+# 2. الاستماع لأمر التورنت (تأكد من تفعيله في BotFather بنفس الحروف الصغيرة)
+@app.on_message(filters.command("torrentleechkmd"))
 async def set_torrent_leech(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     
-    # ربط الحالة بالجروب والمستخدم معاً لمنع التداخل
+    # حجز الحالة للمستخدم الحالي في هذا الجروب
     torrent_states[(chat_id, user_id)] = 'waiting_torrent'
     
     await message.reply_text(
-        f"📥 {message.from_user.mention} تم تفعيل ميزة التورنت الحقيقية لك!\n"
-        "من فضلك أرسل الآن:\n"
+        f"📥 {message.from_user.mention} تم تفعيل ميزة التورنت لك بنجاح!\n"
+        "من فضلك أرسل الآن في الشات:\n"
         "• رابط مغناطيسي (Magnet Link)\n"
-        "• أو اسحب وأفلت ملف تورنت بصيغة `.torrent`"
+        "• أو قم برفع ملف تورنت ينتهي بـ `.torrent`"
     )
 
-# استقبال ملفات التورنت والروابط المغناطيسية ومعالجتها بشكل منفصل
+# 3. استقبال ومعالجة التورنت والروابط الفعلية عبر Aria2
 @app.on_message(filters.text | filters.document)
 async def handle_torrent_input(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     
-    # التحقق هل هذا المستخدم أرسل الملف بعد الضغط على الأمر الخاص به؟
+    # التحقق من أن المرسل هو صاحب الطلب المفعل
     if torrent_states.get((chat_id, user_id)) != 'waiting_torrent':
-        return # يتجاهل الرسالة تماماً إذا لم يطلب المستخدم الأمر أولاً لعدم إزعاج الجروب
+        return # تجاهل الرسالة إذا لم يضغط المستخدم على الأمر أولاً لعدم إزعاج الجروب
 
     download_target = None
 
-    # 1. إذا أرسل المستخدم ملف .torrent
+    # التحقق من نوع المدخلات
     if message.document and message.document.file_name.endswith(".torrent"):
         status = await message.reply_text("⏳ جاري حفظ ملف التورنت على السيرفر لتشغيله...")
         download_target = await message.download()
         
-    # 2. إذا أرسل المستخدم رابط نصي (Magnet)
     elif message.text:
         download_target = message.text.strip()
         if not (download_target.startswith("magnet:") or download_target.startswith("http")):
             return await message.reply_text("❌ عذراً، هذا ليس رابط مغناطيسي (Magnet) أو ملف تورنت صحيح.")
-        status = await message.reply_text("⏳ جاري الاتصال بالـ Seeders وبدء التحميل عبر Aria2...")
+        status = await message.reply_text("⏳ جاري الاتصال بالـ Seeders وبدء التحميل الفعلي عبر Aria2...")
     else:
         return
 
     # إلغاء الحالة فوراً لمنع التكرار أثناء المعالجة
     torrent_states[(chat_id, user_id)] = None
 
-    # إنشاء مجلد تحميل فرعي خاص ومستقل بهذا المستخدم داخل هذا الجروب
+    # إنشاء مجلد تحميل معزول تماماً لهذا المستخدم في هذا الجروب
     user_download_dir = f"torrent_{chat_id}_{user_id}"
     os.makedirs(user_download_dir, exist_ok=True)
 
-    # تشغيل أداة aria2c الفعالة لتحميل التورنت بالخلفية بشكل غير متزامن (Async)
+    # أمر التحميل الفعلي
     cmd = [
         "aria2c", 
         f"--dir={user_download_dir}", 
@@ -90,22 +88,19 @@ async def handle_torrent_input(client, message: Message):
     process = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     await process.wait()
 
-    # فحص المجلد المخصص للمستخدم وجلب الملفات الناتجة
+    # التحقق من اكتمال التحميل
     if not os.path.exists(user_download_dir) or not os.listdir(user_download_dir):
-        await status.edit_text("❌ فشل تحميل التورنت. تأكد أن الرابط يحتوي على متصلين (Seeds) نشطين.")
-        # تنظيف ملف التورنت المرفوع لو كان موجوداً
+        await status.edit_text("❌ فشل تحميل التورنت. تأكد أن التورنت نشط ويحتوي على متصلين (Seeds).")
         if message.document and os.path.exists(download_target):
             os.remove(download_target)
         return
 
-    await status.edit_text("📤 اكتمل تحميل الفيلم بنجاح على السيرفر! جاري الرفع إلى تليجرام الآن...")
+    await status.edit_text("📤 اكتمل تحميل الملف على السيرفر! جاري الرفع إلى تليجرام الآن...")
 
-    # رفع كافة الملفات التي تم تحميلها داخل المجلد الخاص بالمستخدم
+    # رفع الملفات الناتجة وتحديد نوعها تلقائياً
     for root, dirs, files in os.walk(user_download_dir):
         for file in files:
             file_path = os.path.join(root, file)
-            
-            # معرفة نوع الملف تلقائياً لرفعه بشكل صحيح
             mime_type, _ = mimetypes.guess_type(file_path)
             caption_text = f"🎬 تم تحميل وتوصيل الملف بنجاح!\n👤 بطلب من: {message.from_user.mention}"
 
@@ -117,11 +112,10 @@ async def handle_torrent_input(client, message: Message):
             except Exception as e:
                 await message.reply_text(f"❌ حدث خطأ أثناء رفع الملف `{file}`:\n`{str(e)}`")
             
-            # حذف الملف فوراً بعد الرفع لتوفير مساحة السيرفر
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-    # تنظيف المجلد المؤقت والملفات الأساسية بالكامل بعد انتهاء المهمة
+    # تنظيف السيرفر بالكامل بعد انتهاء المهمة لضمان عدم امتلاء المساحة
     try:
         import shutil
         shutil.rmtree(user_download_dir)
@@ -133,11 +127,5 @@ async def handle_torrent_input(client, message: Message):
     await status.delete()
 
 if __name__ == "__main__":
-    app.start()
-    # تعيين القائمة الرسمية الشفافة بالأمر الجديد المنفصل
-    app.set_bot_commands([
-        BotCommand("torrentleechKMD", "📥 تحميل ملفات وروابط التورنت الفورية"),
-        BotCommand("start", "👋 تشغيل البوت")
-    ])
-    print("🚀 بوت التورنت المنفصل والآمن للمجموعات يعمل الآن بنجاح...")
-    asyncio.get_event_loop().run_forever()
+    print("🚀 البوت بدأ العمل ومستعد لاستقبال الأوامر المفعّلة من BotFather بدون كراش...")
+    app.run()
