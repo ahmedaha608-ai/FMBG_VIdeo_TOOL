@@ -51,7 +51,7 @@ async def direct_leech(_, m: Message):
     if not url or "http" not in url: return await m.reply_text("⚠️ **أدخل رابطاً مباشراً.**")
     await m.reply_text("📥 **جاري التحميل المباشر...**")
 
-@app.on_message(filters.command("leechkmdytleech"))
+@app.on_message(filters.command("ytleechkmd"))
 async def yt_leech(_, m: Message):
     if len(m.command) < 2: return await m.reply_text("⚠️ **الرجاء إرسال الرابط.**")
     url = m.command[1]
@@ -66,7 +66,7 @@ async def start_dl(_, cq: CallbackQuery):
     status = await cq.message.edit_text("📥 **جاري بدء المعالجة...**")
     active_tasks[task_id] = asyncio.create_task(download_worker(url, status, task_id, format_id))
 
-@app.on_message(filters.command("leechkmdSpeedtest"))
+@app.on_message(filters.command("Speedtestkmd"))
 async def speedtest_cmd(_, m: Message):
     status = await m.reply_text("🚀 **جاري اختبار سرعة السيرفر...**")
     s = speedtest.Speedtest()
