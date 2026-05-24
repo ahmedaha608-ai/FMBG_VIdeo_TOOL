@@ -1,5 +1,4 @@
 pyrogram
-pyromod
+tgcrypto
+python-dotenv
 yt-dlp
-requests
-aiohttp
