@@ -4,7 +4,7 @@ import time
 import math
 import asyncio
 import logging
-import requests
+import aiohttp
 import yt_dlp
 import speedtest
 
@@ -120,6 +120,62 @@ async def ultra_progress(
         pass
 
 # =========================
+# DOWNLOAD FILE
+# =========================
+
+async def download_file(
+    url,
+    path,
+    msg,
+    filename
+):
+
+    start = time.time()
+
+    timeout = aiohttp.ClientTimeout(
+        total=None
+    )
+
+    async with aiohttp.ClientSession(
+        timeout=timeout
+    ) as session:
+
+        async with session.get(url) as r:
+
+            total = int(
+                r.headers.get(
+                    "Content-Length",
+                    0
+                )
+            )
+
+            downloaded = 0
+
+            with open(path, "wb") as f:
+
+                async for chunk in r.content.iter_chunked(
+                    1024 * 1024
+                ):
+
+                    f.write(chunk)
+
+                    downloaded += len(chunk)
+
+                    await ultra_progress(
+
+                        downloaded,
+
+                        total,
+
+                        msg,
+
+                        start,
+
+                        filename
+
+                    )
+
+# =========================
 # START
 # =========================
 
@@ -144,68 +200,81 @@ async def start_cmd(client, m: Message):
 # DIRECT LEECH
 # =========================
 
-@app.on_message(filters.command(["leechkmd","Leechkmd"]))
+@app.on_message(
+    filters.command(
+        ["leechkmd","Leechkmd"]
+    )
+)
 async def leechkmd(client, m: Message):
 
     if len(m.command) < 2:
-        return await m.reply_text("⚠️ أرسل رابط")
+        return await m.reply_text(
+            "⚠️ أرسل رابط"
+        )
 
     url = m.command[1]
 
-    msg = await m.reply_text("📥 جاري التحميل...")
+    msg = await m.reply_text(
+        "📥 جاري التحميل..."
+    )
 
     try:
 
-        r = requests.get(url, stream=True)
-
-        total = int(r.headers.get("content-length", 0))
-
         filename = os.path.join(
+
             DOWNLOAD_DIR,
+
             f"{int(time.time())}.mp4"
+
         )
 
-        downloaded = 0
+        await download_file(
 
-        start = time.time()
+            url,
 
-        with open(filename, "wb") as f:
+            filename,
 
-            for chunk in r.iter_content(chunk_size=1024*512):
+            msg,
 
-                if chunk:
+            os.path.basename(filename)
 
-                    f.write(chunk)
+        )
 
-                    downloaded += len(chunk)
-
-                    await ultra_progress(
-                        downloaded,
-                        total,
-                        msg,
-                        start,
-                        os.path.basename(filename)
-                    )
-
-        await safe_edit(msg, "📤 جاري الرفع...")
+        await safe_edit(
+            msg,
+            "📤 جاري الرفع..."
+        )
 
         await m.reply_video(
+
             filename,
+
             supports_streaming=True,
+
             caption="✅ تم التحميل",
+
             progress=ultra_progress,
+
             progress_args=(
+
                 msg,
+
                 time.time(),
+
                 os.path.basename(filename)
+
             )
+
         )
 
         os.remove(filename)
 
     except Exception as e:
 
-        await safe_edit(msg, f"❌ {e}")
+        await safe_edit(
+            msg,
+            f"❌ {e}"
+        )
 
 # =========================
 # YT LEECH
