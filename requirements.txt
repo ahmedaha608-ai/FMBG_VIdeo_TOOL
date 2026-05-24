@@ -4,6 +4,3 @@ requests
 yt-dlp
 python-dotenv
 speedtest-cli
-aiohttp
-ffmpeg-python
-psutil
