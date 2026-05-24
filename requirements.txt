@@ -1,8 +1,0 @@
-pyrogram
-tgcrypto
-yt-dlp
-speedtest-cli
-python-dotenv
-aiohttp
-requests
-ffmpeg-python
