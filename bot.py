@@ -8,17 +8,11 @@ import yt_dlp
 import speedtest
 
 from pyrogram import Client, filters
-
 from pyrogram.types import (
-Message,
-InlineKeyboardMarkup,
-InlineKeyboardButton,
-CallbackQuery
-)
-
-import asyncio
-import os
-import time
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
 )
 
 from dotenv import load_dotenv
@@ -43,7 +37,6 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 user_tasks = {}
 send_modes = {}
-last_edit_time = {}  # المتغير الجديد لتفادي Flood Wait
 
 # =========================
 # ULTRA PROGRESS
@@ -59,209 +52,394 @@ async def ultra_progress(
 ):
 
     if uid in user_tasks:
-        if user_tasks[uid].get("cancel"):
+
+        if user_tasks[uid]["cancel"]:
             raise Exception("❌ تم إلغاء العملية")
 
     now = time.time()
-    
-    # التأكد من وجود المفتاح في القاموس
-    if uid not in last_edit_time:
-        last_edit_time[uid] = 0
-    
-    # شرط التحديث كل 5 ثوانٍ فقط لتجنب Flood Wait
-    if now - last_edit_time[uid] > 5:
-        diff = now - start
-        if diff == 0: return
-        
-        percentage = current * 100 / total
-        speed = current / diff
-        
-        # ... (باقي كود الحساب) ...
-        # ملاحظة: تم ترك مساحة للكود الخاص بك، تأكد من إكمال بناء 'text' هنا
-        
-        try:
-            # هنا يتم تحديث الرسالة
-            # await msg.edit_text(text) 
-            last_edit_time[uid] = now
-        except Exception:
-            pass
+    diff = now - start
 
+    if diff == 0:
+        return
 
+    percentage = current * 100 / total
+    speed = current / diff
 
-=========================
+    eta = (
+        (total - current) / speed
+        if speed > 0 else 0
+    )
 
-SAVE VIDEO MESSAGE
+    done = int(percentage / 5)
 
-=========================
+    bar = (
+        "█" * done +
+        "░" * (20 - done)
+    )
 
-reduce_tasks = {}
+    current_mb = current / 1024 / 1024
+    total_mb = total / 1024 / 1024
+    remaining_mb = total_mb - current_mb
+    speed_mb = speed / 1024 / 1024
+
+    elapsed = int(diff)
+
+    mins = elapsed // 60
+    secs = elapsed % 60
+
+    eta_mins = int(eta) // 60
+    eta_secs = int(eta) % 60
+
+    text = f"""
+╭──────────────────────────────╮
+│       🚀 KMD PROGRESS        │
+├──────────────────────────────┤
+
+📄 الملف:
+{filename[:45]}
+
+📊 شريط التقدم:
+
+[{bar}]
+
+✅ النسبة:
+{percentage:.2f}%
+
+📦 الحجم الأصلي:
+{total_mb:.2f} MB
+
+📥 تم التحميل:
+{current_mb:.2f} MB
+
+📉 المتبقي:
+{remaining_mb:.2f} MB
+
+⚡ سرعة التحميل:
+{speed_mb:.2f} MB/s
+
+⏱ الوقت المنقضي:
+{mins}m {secs}s
+
+⌛ الوقت المتبقي:
+{eta_mins}m {eta_secs}s
+
+👤 المستخدم:
+{uid}
+
+╰──────────────────────────────╯
+"""
+
+    keyboard = InlineKeyboardMarkup([
+
+        [
+
+            InlineKeyboardButton(
+                "🔄 Refresh",
+                callback_data=f"refresh_{uid}"
+            ),
+
+            InlineKeyboardButton(
+                "❌ Cancel",
+                callback_data=f"cancel_{uid}"
+            )
+
+        ]
+
+    ])
+
+    try:
+
+        await msg.edit_text(
+            text,
+            reply_markup=keyboard
+        )
+
+    except:
+        pass
+
+# =========================
+# SEND TYPE SELECTOR
+# =========================
+
+async def send_type_selector(msg, action):
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🎬 رفع كفيديو",
+                callback_data=f"sendvideo_{action}"
+            ),
+
+            InlineKeyboardButton(
+                "📁 رفع كمستند",
+                callback_data=f"senddoc_{action}"
+            )
+        ]
+    ])
+
+    await msg.reply_text(
+        "📤 اختر طريقة تنزيل الملف",
+        reply_markup=keyboard
+    )
+
+# =========================
+# SAVE SEND TYPE
+# =========================
+
+@app.on_callback_query(
+    filters.regex("^sendvideo_|^senddoc_")
+)
+async def save_send_type(
+    client,
+    cq: CallbackQuery
+):
+
+    uid = cq.from_user.id
+
+    data = cq.data
+
+    if data.startswith("sendvideo_"):
+
+        mode = "video"
+
+    else:
+
+        mode = "document"
+
+    send_modes[uid] = {
+
+        "mode": mode
+
+    }
+
+    await cq.answer(
+        f"✅ تم اختيار {mode}"
+    )
+
+# =========================
+# CANCEL BUTTON
+# =========================
+
+@app.on_callback_query(filters.regex("^cancel_"))
+async def cancel_task(client, cq: CallbackQuery):
+
+    uid = int(cq.data.split("_")[1])
+
+    if cq.from_user.id != uid:
+
+        return await cq.answer(
+            "⚠️ هذا التحميل ليس لك",
+            show_alert=True
+        )
+
+    if uid in user_tasks:
+
+        user_tasks[uid]["cancel"] = True
+
+    await cq.answer(
+        "❌ تم إلغاء عمليتك"
+    )
+
+# =========================
+# START
+# =========================
+
+@app.on_message(filters.command("start"))
+async def start_cmd(client, m: Message):
+
+    text = """
+🔥 KMD Professional Bot
+
+/leechkmd
+/ytleechkmd
+/VideoReduse
+/videotool
+/enhance
+/splitvideo
+/watermark
+/intro
+/addsub
+/changethumb
+/Speedtestkmd
+/kmdrestart
+/qbleechkmd
+"""
+
+    await m.reply_text(text)
+
+# =========================
+# THUMBNAIL
+# =========================
+
+@app.on_message(filters.command("changethumb"))
+async def change_thumb(client, m: Message):
+
+    if not m.reply_to_message:
+        return await m.reply_text("⚠️ رد على صورة")
+
+    if not m.reply_to_message.photo:
+        return await m.reply_text("⚠️ الصورة غير موجودة")
+
+    await m.reply_to_message.download(
+        file_name=f"thumb_{m.from_user.id}.jpg"
+    )
+
+    await m.reply_text("✅ تم حفظ Thumbnail")
+
+# =========================
+# VIDEO TOOL MENU
+# =========================
+
+@app.on_message(filters.command("videotool"))
+async def video_tool(client, m: Message):
+
+    keyboard = InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "🎨 تغيير الخلفية",
+                callback_data="tool_bg"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "✨ تحسين الجودة",
+                callback_data="tool_enhance"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "✂️ تقسيم 3GB",
+                callback_data="tool_split"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📝 إضافة ترجمة",
+                callback_data="tool_sub"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "💧 علامة مائية",
+                callback_data="tool_watermark"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🎬 إضافة انترو",
+                callback_data="tool_intro"
+            )
+        ]
+
+    ])
+
+    await m.reply_text(
+        "🛠 KMD VIDEO TOOL",
+        reply_markup=keyboard
+    )
+
+# =========================
+# VIDEO REDUSE
+# =========================
 
 @app.on_message(filters.command("VideoReduse"))
 async def video_reduce(client, m: Message):
 
-if not m.reply_to_message:
-    return await m.reply_text(
-        "⚠️ رد على فيديو"
+    if not m.reply_to_message:
+        return await m.reply_text("⚠️ رد على فيديو")
+
+    keyboard = InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "144p",
+                callback_data="reduce_144"
+            ),
+            InlineKeyboardButton(
+                "240p",
+                callback_data="reduce_240"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "360p",
+                callback_data="reduce_360"
+            ),
+            InlineKeyboardButton(
+                "480p",
+                callback_data="reduce_480"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "720p",
+                callback_data="reduce_720"
+            ),
+            InlineKeyboardButton(
+                "1080p",
+                callback_data="reduce_1080"
+            )
+        ]
+
+    ])
+
+    await m.reply_text(
+        "🎬 اختر الجودة المطلوبة",
+        reply_markup=keyboard
     )
 
-uid = m.from_user.id
+# =========================
+# SPEEDTEST
+# =========================
 
-reduce_tasks[uid] = m.reply_to_message.id
+@app.on_message(filters.command("Speedtestkmd"))
+async def speedtest_cmd(client, m: Message):
 
-keyboard = InlineKeyboardMarkup([
+    msg = await m.reply_text("🚀 اختبار السرعة...")
 
-    [
-        InlineKeyboardButton(
-            "240p",
-            callback_data="reduce_240"
-        ),
+    try:
 
-        InlineKeyboardButton(
-            "360p",
-            callback_data="reduce_360"
+        s = speedtest.Speedtest()
+
+        s.get_best_server()
+
+        d = s.download() / 1024 / 1024
+        u = s.upload() / 1024 / 1024
+        p = s.results.ping
+
+        text = (
+            f"📊 Download: {d:.2f} Mbps\n"
+            f"📤 Upload: {u:.2f} Mbps\n"
+            f"📡 Ping: {p:.0f} ms"
         )
-    ],
 
-    [
-        InlineKeyboardButton(
-            "480p",
-            callback_data="reduce_480"
-        ),
+        await msg.edit_text(text)
 
-        InlineKeyboardButton(
-            "720p",
-            callback_data="reduce_720"
-        )
-    ]
+    except Exception as e:
+        await msg.edit_text(f"❌ {e}")
 
-])
+# =========================
+# RESTART
+# =========================
 
-await m.reply_text(
-    "🎬 اختر الجودة",
-    reply_markup=keyboard
-)
+@app.on_message(filters.command("kmdrestart"))
+async def restart_bot(client, m: Message):
 
-=========================
+    await m.reply_text("♻️ جاري إعادة التشغيل...")
 
-REDUCE CALLBACK
+    os.execv(sys.executable, ['python'] + sys.argv)
 
-=========================
+# =========================
+# RUN BOT
+# =========================
 
-@app.on_callback_query(filters.regex("^reduce_"))
-async def reduce_callback(client, cq: CallbackQuery):
-
-quality = cq.data.split("_")[1]
-
-uid = cq.from_user.id
-
-if uid not in reduce_tasks:
-
-    return await cq.answer(
-        "⚠️ انتهت العملية",
-        show_alert=True
-    )
-
-msg_id = reduce_tasks[uid]
-
-video_msg = await client.get_messages(
-    cq.message.chat.id,
-    msg_id
-)
-
-msg = await cq.message.edit_text(
-    f"📥 ضغط الفيديو {quality}p..."
-)
-
-input_file = await video_msg.download(
-    file_name=f"{DOWNLOAD_DIR}/{uid}_input.mp4"
-)
-
-output_file = (
-    f"{DOWNLOAD_DIR}/{uid}_{quality}.mp4"
-)
-
-scale = f"scale=-2:{quality}"
-
-cmd = [
-
-    "ffmpeg",
-
-    "-threads", "1",
-
-    "-i", input_file,
-
-    "-vf", scale,
-
-    "-c:v", "libx264",
-
-    "-preset", "ultrafast",
-
-    "-crf", "30",
-
-    "-c:a", "aac",
-
-    "-b:a", "128k",
-
-    output_file,
-
-    "-y"
-
-]
-
-process = await asyncio.create_subprocess_exec(
-    *cmd
-)
-
-await process.wait()
-
-await msg.edit_text(
-    "📤 جاري الرفع..."
-)
-
-mode = send_modes.get(
-    uid,
-    {}
-).get(
-    "mode",
-    "video"
-)
-
-thumb = f"thumb_{uid}.jpg"
-
-if mode == "video":
-
-    await cq.message.reply_video(
-
-        output_file,
-
-        thumb=thumb if os.path.exists(thumb) else None,
-
-        caption=f"✅ الجودة {quality}p"
-
-    )
-
-else:
-
-    await cq.message.reply_document(
-
-        output_file,
-
-        thumb=thumb if os.path.exists(thumb) else None,
-
-        caption=f"✅ الجودة {quality}p"
-
-    )
-
-try:
-
-    os.remove(input_file)
-    os.remove(output_file)
-
-except:
-    pass
-
-reduce_tasks.pop(uid, None)
-
-
-
-
+if __name__ == "__main__":
+    app.run()
