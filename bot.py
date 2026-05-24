@@ -13,7 +13,7 @@ app = Client("Eng_Bot", api_id=int(os.getenv("API_ID")), api_hash=os.getenv("API
 
 active_tasks = {}
 
-# --- [1. دالة العرض الاحترافي (شكل لوحة التحكم)] ---
+# --- [1. دالة العرض الاحترافي (لوحة عدادات كبيرة)] ---
 def progress_hook(d, message: Message, task_id: str):
     if d['status'] == 'downloading':
         p = d.get('_percent_str', '0%').replace(' ', '')
@@ -22,6 +22,7 @@ def progress_hook(d, message: Message, task_id: str):
         done = d.get('_downloaded_bytes_str', 'N/A')
         eta = d.get('_eta_str', 'N/A')
         
+        # رسم شريط تقدم ضخم
         filled = int(float(p.replace('%', '')) / 5)
         bar = "▓" * filled + "░" * (20 - filled)
         
@@ -55,12 +56,18 @@ async def download_worker(url, message, task_id, format_id='best'):
         active_tasks.pop(task_id, None)
 
 # --- [3. الأوامر] ---
+@app.on_message(filters.command("kmdleech"))
+async def direct_leech(_, m: Message):
+    if len(m.command) < 2: return await m.reply_text("⚠️ **الرجاء إرسال الرابط.**")
+    url = m.command[1]
+    task_id = str(uuid.uuid4())[:8]
+    status = await m.reply_text("📥 **جاري بدء التحميل المباشر...**")
+    active_tasks[task_id] = asyncio.create_task(download_worker(url, status, task_id))
+
 @app.on_message(filters.command("kmdytleech"))
 async def choose_quality(_, m: Message):
-    url = m.command[1] if len(m.command) > 1 else ""
-    if not url: return await m.reply_text("⚠️ **الرابط مطلوب.**")
-    
-    # القائمة الثابتة للجودات
+    if len(m.command) < 2: return await m.reply_text("⚠️ **الرجاء إرسال الرابط.**")
+    url = m.command[1]
     kb = [
         [InlineKeyboardButton("🎥 1080p - mp4", callback_data=f"dl_137_{url}")],
         [InlineKeyboardButton("🎥 720p - mp4", callback_data=f"dl_136_{url}")],
@@ -98,3 +105,4 @@ async def restart(_, m: Message):
 
 if __name__ == "__main__":
     app.run()
+
