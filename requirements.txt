@@ -1,8 +1,9 @@
-aiohttp
 pyrogram
 tgcrypto
+aiohttp
+yt-dlp
 python-dotenv
 requests
-asyncio
 ffmpeg-python
-yt-dlp
+pillow
+speedtest-cli
