@@ -25,10 +25,9 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
-logging.getLogger("pyrogram").setLevel(logging.ERROR)
 
 app = Client(
-    "KMD_PRO",
+    "KMD_FINAL",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
@@ -38,10 +37,12 @@ DOWNLOAD_DIR = "downloads"
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-user_tasks = {}
 yt_links = {}
 reduce_tasks = {}
-last_edit = {}
+
+# =========================
+# SAFE EDIT
+# =========================
 
 async def safe_edit(msg, text):
 
@@ -50,7 +51,17 @@ async def safe_edit(msg, text):
     except:
         pass
 
-async def progress_bar(current, total, msg, start):
+# =========================
+# ULTRA PROGRESS
+# =========================
+
+async def ultra_progress(
+    current,
+    total,
+    msg,
+    start,
+    filename="video.mp4"
+):
 
     diff = time.time() - start
 
@@ -61,26 +72,45 @@ async def progress_bar(current, total, msg, start):
 
     speed = current / diff
 
-    filled = math.floor(percentage / 5)
+    elapsed = round(diff)
 
-    bar = "█" * filled + "░" * (20-filled)
+    eta = round((total-current)/speed)
 
     current_mb = current / 1024 / 1024
+
     total_mb = total / 1024 / 1024
 
     speed_mb = speed / 1024 / 1024
 
+    filled = math.floor(percentage / 5)
+
+    bar = "█" * filled + "░" * (20-filled)
+
     text = f"""
 
-🚀 KMD PROGRESS
+╭━━━〔 🚀 KMD UPLOADER 〕━━━╮
+
+📂 NAME:
+{filename}
 
 [{bar}]
 
-📊 {percentage:.2f}%
+📊 DONE:
+{percentage:.2f}%
 
-⚡ {speed_mb:.2f} MB/s
+⚡ SPEED:
+{speed_mb:.2f} MB/s
 
-📦 {current_mb:.2f}/{total_mb:.2f} MB
+📦 SIZE:
+{current_mb:.2f}/{total_mb:.2f} MB
+
+⏳ LEFT:
+{eta} sec
+
+⌛ ELAPSED:
+{elapsed} sec
+
+╰━━━━━━━━━━━━━━━━━━━━╯
 
 """
 
@@ -88,6 +118,10 @@ async def progress_bar(current, total, msg, start):
         await msg.edit_text(text)
     except:
         pass
+
+# =========================
+# START
+# =========================
 
 @app.on_message(filters.command("start"))
 async def start_cmd(client, m: Message):
@@ -105,6 +139,10 @@ async def start_cmd(client, m: Message):
 """
 
     await m.reply_text(text)
+
+# =========================
+# DIRECT LEECH
+# =========================
 
 @app.on_message(filters.command(["leechkmd","Leechkmd"]))
 async def leechkmd(client, m: Message):
@@ -141,26 +179,37 @@ async def leechkmd(client, m: Message):
 
                     downloaded += len(chunk)
 
-                    await progress_bar(
+                    await ultra_progress(
                         downloaded,
                         total,
                         msg,
-                        start
+                        start,
+                        os.path.basename(filename)
                     )
 
-        await msg.edit_text("📤 جاري الرفع...")
+        await safe_edit(msg, "📤 جاري الرفع...")
 
         await m.reply_video(
             filename,
             supports_streaming=True,
-            caption="✅ تم التحميل"
+            caption="✅ تم التحميل",
+            progress=ultra_progress,
+            progress_args=(
+                msg,
+                time.time(),
+                os.path.basename(filename)
+            )
         )
 
         os.remove(filename)
 
     except Exception as e:
 
-        await msg.edit_text(f"❌ {e}")
+        await safe_edit(msg, f"❌ {e}")
+
+# =========================
+# YT LEECH
+# =========================
 
 @app.on_message(filters.command(["ytleechkmd","Ytlleechkmd"]))
 async def ytleechkmd(client, m: Message):
@@ -229,6 +278,10 @@ async def ytleechkmd(client, m: Message):
 
         await safe_edit(msg, f"❌ {e}")
 
+# =========================
+# YT DOWNLOAD
+# =========================
+
 @app.on_callback_query(filters.regex("^yt_"))
 async def yt_download(client, cq: CallbackQuery):
 
@@ -267,7 +320,13 @@ async def yt_download(client, cq: CallbackQuery):
         await cq.message.reply_video(
             file_path,
             supports_streaming=True,
-            caption="✅ تم التحميل"
+            caption="✅ تم التحميل",
+            progress=ultra_progress,
+            progress_args=(
+                msg,
+                time.time(),
+                os.path.basename(file_path)
+            )
         )
 
         os.remove(file_path)
@@ -275,6 +334,10 @@ async def yt_download(client, cq: CallbackQuery):
     except Exception as e:
 
         await safe_edit(msg, f"❌ {e}")
+
+# =========================
+# VIDEO REDUCE HEVC
+# =========================
 
 qualities = {
     "360": "scale=-2:360",
@@ -351,6 +414,10 @@ async def reduce_callback(client, cq: CallbackQuery):
         f"{DOWNLOAD_DIR}/{uid}_{quality}_hevc.mp4"
     )
 
+    thumb_file = (
+        f"{DOWNLOAD_DIR}/{uid}_thumb.jpg"
+    )
+
     scale = qualities[quality]
 
     cmd = [
@@ -361,7 +428,7 @@ async def reduce_callback(client, cq: CallbackQuery):
 
         "-i", input_file,
 
-        "-vf", scale,
+        "-vf", f"{scale},thumbnail",
 
         "-c:v", "libx265",
 
@@ -373,11 +440,13 @@ async def reduce_callback(client, cq: CallbackQuery):
 
         "-pix_fmt", "yuv420p",
 
+        "-movflags", "+faststart",
+
         "-c:a", "aac",
 
         "-b:a", "96k",
 
-        "-movflags", "+faststart",
+        "-max_muxing_queue_size", "9999",
 
         output_file,
 
@@ -389,19 +458,72 @@ async def reduce_callback(client, cq: CallbackQuery):
 
     await process.wait()
 
+    thumb_cmd = [
+
+        "ffmpeg",
+
+        "-i", output_file,
+
+        "-ss", "00:00:03",
+
+        "-vframes", "1",
+
+        thumb_file,
+
+        "-y"
+
+    ]
+
+    thumb_process = await asyncio.create_subprocess_exec(
+        *thumb_cmd
+    )
+
+    await thumb_process.wait()
+
     await msg.edit_text("📤 جاري الرفع...")
 
     await cq.message.reply_video(
+
         output_file,
+
+        thumb=thumb_file,
+
         supports_streaming=True,
-        caption=f"✅ HEVC x265 {quality}p"
+
+        width=1280,
+
+        height=720,
+
+        duration=video_msg.video.duration,
+
+        caption=f"✅ HEVC x265 {quality}p",
+
+        progress=ultra_progress,
+
+        progress_args=(
+
+            msg,
+
+            time.time(),
+
+            os.path.basename(output_file)
+
+        )
+
     )
 
     try:
+
         os.remove(input_file)
         os.remove(output_file)
+        os.remove(thumb_file)
+
     except:
         pass
+
+# =========================
+# SPEEDTEST
+# =========================
 
 @app.on_message(filters.command("Speedtestkmd"))
 async def speedtest_cmd(client, m: Message):
@@ -426,6 +548,10 @@ async def speedtest_cmd(client, m: Message):
 
         await msg.edit_text(f"❌ {e}")
 
+# =========================
+# RESTART
+# =========================
+
 @app.on_message(filters.command("kmdrestart"))
 async def restart_bot(client, m: Message):
 
@@ -439,249 +565,4 @@ async def restart_bot(client, m: Message):
         *sys.argv
     )
 
-
-
-
-
-
-
-
-=========================
-
-ULTRA PROGRESS BAR
-
-=========================
-
-async def ultra_progress(
-current,
-total,
-msg,
-start,
-filename="video.mp4"
-):
-
-now = time.time()
-
-diff = now - start
-
-if diff == 0:
-    return
-
-percentage = current * 100 / total
-
-speed = current / diff
-
-elapsed = round(diff)
-
-eta = round((total-current)/speed)
-
-current_mb = current / 1024 / 1024
-
-total_mb = total / 1024 / 1024
-
-speed_mb = speed / 1024 / 1024
-
-filled = math.floor(percentage / 5)
-
-bar = "█" * filled + "░" * (20-filled)
-
-text = f"""
-
-╭━━━〔 🚀 KMD UPLOADER 〕━━━╮
-
-📂 NAME:
-{filename}
-
-[{bar}]
-
-📊 DONE:
-{percentage:.2f}%
-
-⚡ SPEED:
-{speed_mb:.2f} MB/s
-
-📦 SIZE:
-{current_mb:.2f} MB
-/
-{total_mb:.2f} MB
-
-⏳ LEFT:
-{eta} sec
-
-⌛ ELAPSED:
-{elapsed} sec
-
-╰━━━━━━━━━━━━━━━━━━━━╯
-
-"""
-
-keyboard = InlineKeyboardMarkup([
-
-    [
-
-        InlineKeyboardButton(
-            "❌ CANCEL",
-            callback_data="cancel_task"
-        ),
-
-        InlineKeyboardButton(
-            "🔄 REFRESH",
-            callback_data="refresh_task"
-        )
-
-    ]
-
-])
-
-try:
-
-    await msg.edit_text(
-        text,
-        reply_markup=keyboard
-    )
-
-except:
-    pass
-
-=========================
-
-CANCEL BUTTON
-
-=========================
-
-cancel_tasks = {}
-
-@app.on_callback_query(
-filters.regex("^cancel_task")
-)
-async def cancel_upload(client, cq: CallbackQuery):
-
-uid = cq.from_user.id
-
-cancel_tasks[uid] = True
-
-await cq.answer(
-    "❌ تم إلغاء العملية",
-    show_alert=True
-)
-
-=========================
-
-REFRESH BUTTON
-
-=========================
-
-@app.on_callback_query(
-filters.regex("^refresh_task")
-)
-async def refresh_upload(client, cq: CallbackQuery):
-
-await cq.answer(
-    "🔄 تم التحديث",
-    show_alert=False
-)
-
-=========================
-
-DOWNLOAD WITH PROGRESS
-
-=========================
-
-msg = await m.reply_text(
-"📥 بدء التحميل..."
-)
-
-start = time.time()
-
-filename = os.path.basename(
-file_path
-)
-
-with open(filename, "wb") as f:
-
-for chunk in r.iter_content(
-    chunk_size=1024*512
-):
-
-    if cancel_tasks.get(
-        m.from_user.id
-    ):
-
-        raise Exception(
-            "❌ تم الإلغاء"
-        )
-
-    if chunk:
-
-        f.write(chunk)
-
-        downloaded += len(chunk)
-
-        await ultra_progress(
-
-            downloaded,
-
-            total,
-
-            msg,
-
-            start,
-
-            filename
-
-        )
-
-=========================
-
-TELEGRAM UPLOAD PROGRESS
-
-=========================
-
-await m.reply_video(
-
-file_path,
-
-supports_streaming=True,
-
-caption="✅ تم الرفع",
-
-progress=ultra_progress,
-
-progress_args=(
-
-    msg,
-
-    time.time(),
-
-    os.path.basename(file_path)
-
-)
-
-)
-
-=========================
-
-DOCUMENT UPLOAD
-
-=========================
-
-await m.reply_document(
-
-file_path,
-
-caption="✅ تم الرفع",
-
-progress=ultra_progress,
-
-progress_args=(
-
-    msg,
-
-    time.time(),
-
-    os.path.basename(file_path)
-
-)
-
-)
 app.run()
