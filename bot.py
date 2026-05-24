@@ -425,6 +425,277 @@ async def speedtest_cmd(client, m: Message):
 
     except Exception as e:
         await msg.edit_text(f"❌ {e}")
+FFMPEG_PRESET = "ultrafast"
+FFMPEG_CRF = "30"
+
+=========================
+
+SAFE ENHANCE VIDEO
+
+=========================
+
+@app.on_message(filters.command("enhance"))
+async def enhance_video(client, m: Message):
+
+if not m.reply_to_message:
+    return await m.reply_text(
+        "⚠️ رد على فيديو"
+    )
+
+uid = m.from_user.id
+
+msg = await m.reply_text(
+    "✨ تحسين الجودة..."
+)
+
+input_file = await m.reply_to_message.download(
+    file_name=f"{DOWNLOAD_DIR}/enhance_input.mp4"
+)
+
+output_file = f"{DOWNLOAD_DIR}/enhanced.mp4"
+
+start = time.time()
+
+user_tasks[uid] = {
+    "cancel": False
+}
+
+cmd = [
+
+    "ffmpeg",
+
+    "-threads", "1",
+
+    "-i", input_file,
+
+    "-vf",
+    "scale=-2:720",
+
+    "-c:v", "libx264",
+
+    "-preset", FFMPEG_PRESET,
+
+    "-crf", FFMPEG_CRF,
+
+    "-c:a", "aac",
+
+    "-b:a", "128k",
+
+    output_file,
+
+    "-y"
+
+]
+
+process = await asyncio.create_subprocess_exec(
+    *cmd,
+    stdout=asyncio.subprocess.PIPE,
+    stderr=asyncio.subprocess.PIPE
+)
+
+while True:
+
+    if user_tasks[uid]["cancel"]:
+
+        process.kill()
+
+        return await msg.edit_text(
+            "❌ تم الإلغاء"
+        )
+
+    if process.returncode is not None:
+        break
+
+    await asyncio.sleep(2)
+
+await process.communicate()
+
+await msg.edit_text(
+    "📤 جاري الرفع..."
+)
+
+mode = send_modes.get(
+    uid,
+    {}
+).get(
+    "mode",
+    "video"
+)
+
+thumb = f"thumb_{uid}.jpg"
+
+if mode == "video":
+
+    await m.reply_video(
+
+        output_file,
+
+        thumb=thumb if os.path.exists(thumb) else None,
+
+        caption="✨ تم تحسين الجودة"
+
+    )
+
+else:
+
+    await m.reply_document(
+
+        output_file,
+
+        thumb=thumb if os.path.exists(thumb) else None,
+
+        caption="✨ تم تحسين الجودة"
+
+    )
+
+try:
+
+    if os.path.exists(input_file):
+        os.remove(input_file)
+
+    if os.path.exists(output_file):
+        os.remove(output_file)
+
+except:
+    pass
+
+user_tasks.pop(uid, None)
+
+=========================
+
+SAFE VIDEO REDUSE
+
+=========================
+
+@app.on_callback_query(filters.regex("^reduce_"))
+async def reduce_callback(client, cq: CallbackQuery):
+
+quality = cq.data.split("_")[1]
+
+uid = cq.from_user.id
+
+user_tasks[uid] = {
+    "cancel": False
+}
+
+msg = cq.message
+
+await msg.edit_text(
+    f"📥 جاري الضغط {quality}p..."
+)
+
+input_file = await cq.message.reply_to_message.download(
+    file_name=f"{DOWNLOAD_DIR}/input_{uid}.mp4"
+)
+
+output_file = f"{DOWNLOAD_DIR}/reduced_{quality}_{uid}.mp4"
+
+scale = f"scale=-2:{quality}"
+
+cmd = [
+
+    "ffmpeg",
+
+    "-threads", "1",
+
+    "-i", input_file,
+
+    "-vf", scale,
+
+    "-c:v", "libx264",
+
+    "-preset", FFMPEG_PRESET,
+
+    "-crf", FFMPEG_CRF,
+
+    "-c:a", "aac",
+
+    "-b:a", "128k",
+
+    output_file,
+
+    "-y"
+
+]
+
+process = await asyncio.create_subprocess_exec(
+    *cmd,
+    stdout=asyncio.subprocess.PIPE,
+    stderr=asyncio.subprocess.PIPE
+)
+
+while True:
+
+    if user_tasks[uid]["cancel"]:
+
+        process.kill()
+
+        return await msg.edit_text(
+            "❌ تم الإلغاء"
+        )
+
+    if process.returncode is not None:
+        break
+
+    await asyncio.sleep(2)
+
+await process.communicate()
+
+await msg.edit_text(
+    "📤 جاري الرفع..."
+)
+
+mode = send_modes.get(
+    uid,
+    {}
+).get(
+    "mode",
+    "video"
+)
+
+thumb = f"thumb_{uid}.jpg"
+
+if mode == "video":
+
+    await cq.message.reply_video(
+
+        output_file,
+
+        thumb=thumb if os.path.exists(thumb) else None,
+
+        caption=f"✅ الجودة النهائية {quality}p"
+
+    )
+
+else:
+
+    await cq.message.reply_document(
+
+        output_file,
+
+        thumb=thumb if os.path.exists(thumb) else None,
+
+        caption=f"✅ الجودة النهائية {quality}p"
+
+    )
+
+try:
+
+    if os.path.exists(input_file):
+        os.remove(input_file)
+
+    if os.path.exists(output_file):
+        os.remove(output_file)
+
+except:
+    pass
+
+user_tasks.pop(uid, None)
+
+
+
+
+
 
 # =========================
 # RESTART
