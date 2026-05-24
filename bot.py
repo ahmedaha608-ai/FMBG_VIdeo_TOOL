@@ -439,4 +439,249 @@ async def restart_bot(client, m: Message):
         *sys.argv
     )
 
+
+
+
+
+
+
+
+=========================
+
+ULTRA PROGRESS BAR
+
+=========================
+
+async def ultra_progress(
+current,
+total,
+msg,
+start,
+filename="video.mp4"
+):
+
+now = time.time()
+
+diff = now - start
+
+if diff == 0:
+    return
+
+percentage = current * 100 / total
+
+speed = current / diff
+
+elapsed = round(diff)
+
+eta = round((total-current)/speed)
+
+current_mb = current / 1024 / 1024
+
+total_mb = total / 1024 / 1024
+
+speed_mb = speed / 1024 / 1024
+
+filled = math.floor(percentage / 5)
+
+bar = "█" * filled + "░" * (20-filled)
+
+text = f"""
+
+╭━━━〔 🚀 KMD UPLOADER 〕━━━╮
+
+📂 NAME:
+{filename}
+
+[{bar}]
+
+📊 DONE:
+{percentage:.2f}%
+
+⚡ SPEED:
+{speed_mb:.2f} MB/s
+
+📦 SIZE:
+{current_mb:.2f} MB
+/
+{total_mb:.2f} MB
+
+⏳ LEFT:
+{eta} sec
+
+⌛ ELAPSED:
+{elapsed} sec
+
+╰━━━━━━━━━━━━━━━━━━━━╯
+
+"""
+
+keyboard = InlineKeyboardMarkup([
+
+    [
+
+        InlineKeyboardButton(
+            "❌ CANCEL",
+            callback_data="cancel_task"
+        ),
+
+        InlineKeyboardButton(
+            "🔄 REFRESH",
+            callback_data="refresh_task"
+        )
+
+    ]
+
+])
+
+try:
+
+    await msg.edit_text(
+        text,
+        reply_markup=keyboard
+    )
+
+except:
+    pass
+
+=========================
+
+CANCEL BUTTON
+
+=========================
+
+cancel_tasks = {}
+
+@app.on_callback_query(
+filters.regex("^cancel_task")
+)
+async def cancel_upload(client, cq: CallbackQuery):
+
+uid = cq.from_user.id
+
+cancel_tasks[uid] = True
+
+await cq.answer(
+    "❌ تم إلغاء العملية",
+    show_alert=True
+)
+
+=========================
+
+REFRESH BUTTON
+
+=========================
+
+@app.on_callback_query(
+filters.regex("^refresh_task")
+)
+async def refresh_upload(client, cq: CallbackQuery):
+
+await cq.answer(
+    "🔄 تم التحديث",
+    show_alert=False
+)
+
+=========================
+
+DOWNLOAD WITH PROGRESS
+
+=========================
+
+msg = await m.reply_text(
+"📥 بدء التحميل..."
+)
+
+start = time.time()
+
+filename = os.path.basename(
+file_path
+)
+
+with open(filename, "wb") as f:
+
+for chunk in r.iter_content(
+    chunk_size=1024*512
+):
+
+    if cancel_tasks.get(
+        m.from_user.id
+    ):
+
+        raise Exception(
+            "❌ تم الإلغاء"
+        )
+
+    if chunk:
+
+        f.write(chunk)
+
+        downloaded += len(chunk)
+
+        await ultra_progress(
+
+            downloaded,
+
+            total,
+
+            msg,
+
+            start,
+
+            filename
+
+        )
+
+=========================
+
+TELEGRAM UPLOAD PROGRESS
+
+=========================
+
+await m.reply_video(
+
+file_path,
+
+supports_streaming=True,
+
+caption="✅ تم الرفع",
+
+progress=ultra_progress,
+
+progress_args=(
+
+    msg,
+
+    time.time(),
+
+    os.path.basename(file_path)
+
+)
+
+)
+
+=========================
+
+DOCUMENT UPLOAD
+
+=========================
+
+await m.reply_document(
+
+file_path,
+
+caption="✅ تم الرفع",
+
+progress=ultra_progress,
+
+progress_args=(
+
+    msg,
+
+    time.time(),
+
+    os.path.basename(file_path)
+
+)
+
+)
 app.run()
